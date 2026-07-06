@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd "${SCRIPT_DIR}" && pwd)
+
+STEP=${1:-1}
+
+function log() {
+    echo -n "[$(date)]"
+    echo -n " $1: "
+    shift
+    echo $*
+}
+
+function info() {
+    log "INFO" $*
+}
+
+function warn() {
+    log "WARN" $* 1>&2
+}
+
+function error() {
+    log "ERROR" $* 1>&2
+}
+
+function blankLine() {
+    echo ""
+}
+
+function abort() {
+    local RET=$1
+    shift
+    error $*
+    exit ${RET}
+}
+
+function aborted() {
+    abort 127 "Aborted due to user/OS interrupt"
+}
+
+trap aborted SIGINT SIGTERM
+
+function bytesToHuman() {
+    local b=${1:-0}
+    local d=''
+    local s=0
+    local S=(Bytes {K,M,G,T,E,P,Y,Z}iB)
+    while ((b >= 1024)); do
+        d="$(printf ".%02d" $((b % 1024 * 100 / 1024)))"
+        b=$((b / 1024))
+        let s++
+    done
+    echo "$b$d ${S[$s]}"
+}
+
+OUTPUT_DIR="/tmp/$(echo "$PWD" | md5)/"
+if ! mkdir -p ${OUTPUT_DIR}; then
+  abort 1 "Failed to create temporary output directory ${OUTPUT_DIR}"
+fi
+info "Temporary Output Files will be written to ${OUTPUT_DIR}"
+
+# Firstly verify that this is a Maven project directory
+blankLine
+info "Step 1: Validate Maven Project Directory"
+if [ ${STEP} -le 1 ]; then
+    if [ ! -f "pom.xml" ]; then
+    abort 1 "No pom.xml found in the current directory"
+    fi
+    info "Validated that current directory is a Maven project directory"
+else
+    info "Skipped at user request"
+fi
+
+# Secondly verify that the Maven project uses Maven Central publishing plugin
+blankLine
+info "Step 2: Validate Maven Central Publishing Plugin used"
+if [ ${STEP} -le 2 ]; then
+    if ! mvn help:effective-pom | grep central-publishing-maven-plugin >/dev/null 2>&1; then
+      abort 2 "pom.xml does not appear to use Maven Central publishing plugin"
+    fi
+    info "Validated that Maven project uses Maven Central publishing plugin"
+else
+    info "Skipped at user request"
+fi
+
+# Determine the list of modules
+blankLine
+info "Step 3: Quick Building the Maven Project"
+if [ ${STEP} -le 3 ]; then
+    info "Quick building the Maven Project (skipping tests, GPG signing, CycloneDX SBOMs, Javadoc, Source and Delombok)"
+    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip -q ; then
+      abort 3 "Failed to quick build the Maven project"
+    fi
+    info "Maven project quick builds OK"
+else
+    info "Skipped at user request"
+fi
+blankLine
+info "Step 4: Determining Maven Modules"
+if [ ${STEP} -le 4 ]; then
+    info "Detecting Maven Modules..."
+    mvn exec:exec -Dexec.executable=echo -Dexec.args='${project.artifactId}' -q > ${OUTPUT_DIR}maven-modules.txt
+else
+    info "Skipped at user request"
+fi
+TOTAL_MODULES=$(wc -l ${OUTPUT_DIR}maven-modules.txt | awk '{print $1}' | tr -d ' ')
+info "Found ${TOTAL_MODULES} Maven modules in this project"
+
+# For each module determine whether or not it is published
+blankLine
+info "Step 5: Determining which Maven Modules are Published"
+HASHES_PER_FILE=0
+if [ ${STEP} -le 5 ]; then
+  rm -f ${OUTPUT_DIR}published-maven-modules.txt >/dev/null 2>&1
+  while IFS= read -r -u3 MODULE; do
+    rm -f ${OUTPUT_DIR}${MODULE}-effective-pom.xml >/dev/null 2>&1
+    info "Checking whether Maven Module ${MODULE} is published to Maven central..."
+    mvn help:effective-pom -pl :${MODULE} -Doutput=${OUTPUT_DIR}${MODULE}-effective-pom.xml -q
+    
+    PUBLISHING=$(xidel -se "//plugin[artifactId='central-publishing-maven-plugin'][1]/configuration/skipPublishing" ${OUTPUT_DIR}${MODULE}-effective-pom.xml 2>/dev/null | head -n 1)
+    if [ -z "${PUBLISHING}" ]; then
+        PUBLISHING=$(mvn exec:exec -Dexec.executable=echo -Dexec.args='${skipPublishing}' -pl :${MODULE} -q)
+    fi
+
+    if [ "${PUBLISHING}" == "true" ]; then
+        warn "Detected Maven Module ${MODULE} skips publishing to Maven Central"
+    else
+        echo ${MODULE} >> ${OUTPUT_DIR}published-maven-modules.txt
+        info "Maven Module ${MODULE} is published to Maven Central"
+    fi
+
+    if [ ${HASHES_PER_FILE} -eq 0 ]; then
+      CHECKSUMS=$(xidel -se "//plugin[artifactId='central-publishing-maven-plugin'][1]/configuration/checksums" ${OUTPUT_DIR}${MODULE}-effective-pom.xml 2>/dev/null | head -n 1)
+      if [ "${CHECKSUMS}" == "required" ]; then
+        HASHES_PER_FILE=2
+      else
+        HASHES_PER_FILE=4
+      fi
+      echo ${HASHES_PER_FILE} > ${OUTPUT_DIR}hashes-per-file
+    fi
+  done 3< ${OUTPUT_DIR}maven-modules.txt
+else
+    info "Skipped at user request"
+    HASHES_PER_FILE=$(cat ${OUTPUT_DIR}hashes-per-file)
+    if [ -z "${HASHES_PER_FILE}" ]; then
+      HASHES_PER_FILE=4
+    fi
+fi
+
+PUBLISHED_MODULES=$(wc -l ${OUTPUT_DIR}published-maven-modules.txt | awk '{print $1}' | tr -d ' ')
+info "${PUBLISHED_MODULES}/${TOTAL_MODULES} modules are published to Maven Central"
+if [ ${PUBLISHED_MODULES} -eq 0 ]; then
+  abort 4 "No modules are published to Maven Central"
+fi
+info "Maven Project will generate ${HASHES_PER_FILE} hash files per release file"
+
+# Next we want to dry run deployment to see what bundles would be generated
+# NB - Central Publishing Plugin doesn't have a dry-run option, best we can do is autoPublish=false and set a dud
+#      centralBaseUrl so it doesn't actually upload to real Maven Central
+blankLine
+info "Step 6: Maven Deploy Dry Run"
+if [ ${STEP} -le 6 ]; then
+    info "Dry running mvn deploy (with tests skipped) to audit publishing bundle files..."
+    mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost >${OUTPUT_DIR}deploy-dry-run.log 2>&1
+    info "Dry ran mvn deploy"
+else
+    info "Skipped at user request"
+fi
+
+# Determine bundle directories
+blankLine
+info "Step 7: Determining Bundle directories"
+if [ ${STEP} -le 7 ]; then
+  rm -f ${OUTPUT_DIR}bundle-directories.txt >/dev/null 2>&1
+  while IFS= read -r -u3 MODULE; do
+    MODULE_INFO=$(mvn exec:exec -Dexec.executable=echo -Dexec.args='${project.groupId}:${project.artifactId}:${project.version}' -pl :${MODULE} -q)
+    GROUP_ID=$(echo ${MODULE_INFO} | cut -d ':' -f 1)
+    ARTIFACT_ID=$(echo ${MODULE_INFO} | cut -d ':' -f 2)
+    VERSION=$(echo ${MODULE_INFO} | cut -d ':' -f 3)
+
+    BUNDLE_DIR="target/central-deferred/$(echo "${GROUP_ID}" | tr -s '.' '/')/${ARTIFACT_ID}/${VERSION}/"
+    info "Maven Module ${MODULE} has bundle directory ${BUNDLE_DIR}"
+    echo "${MODULE} ${BUNDLE_DIR}" >> ${OUTPUT_DIR}bundle-directories.txt
+  done 3< ${OUTPUT_DIR}published-maven-modules.txt
+else
+    info "Skipped at user request"
+fi
+
+# For each module inspect the bundle
+TOTAL_FILES=0
+TOTAL_FILE_SIZES=0
+blankLine
+info "Step 8: Auditing Maven Central bundles"
+while IFS= read -r -u3 BUNDLE; do
+  MODULE=$(echo ${BUNDLE} | awk '{print $1}')
+  info "Auditing Maven Central bundle for Maven Module ${MODULE}..."
+  BUNDLE_DIR=$(echo ${BUNDLE} | awk '{print $2}')
+  if [ ! -d "${BUNDLE_DIR}" ]; then
+    error "Failed to find Bundle directory ${BUNDLE_DIR} for Maven Module ${MODULE}"
+    continue
+  fi
+
+  MODULE_FILES=$(ls "${BUNDLE_DIR}" | grep -v maven-metadata | wc -l | tr -d ' ')
+  TOTAL_FILES=$(( ${TOTAL_FILES} + ${MODULE_FILES} ))
+  info "Maven Module ${MODULE} publishes ${MODULE_FILES} release files"
+  ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' > ${OUTPUT_DIR}${MODULE}-release-files.txt
+
+  MODULE_FILE_SIZES=$(ls -l "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{sum += $5} END {print sum}')
+  TOTAL_FILE_SIZES=$(( ${TOTAL_FILE_SIZES} + ${MODULE_FILE_SIZES} ))
+  info "Maven Module ${MODULE} publishes $(bytesToHuman ${MODULE_FILE_SIZES}) bytes of release files"
+
+  # Warn if module is publishing more than 4MB of release files, this tends to imply fat JARs or some other artifacts
+  # being produced that are large
+  if [ ${MODULE_FILE_SIZES} -gt 4194304 ]; then
+    warn "Maven Module ${MODULE} produces more than 4MB of release files, top 5 files are as follows:"
+    ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' | head -n 6
+
+    # Check for obvious causes of fat JARs
+    if xidel -se "//plugin[artifactId='maven-shade-plugin']"; then
+      warn "Maven Module ${MODULE} uses the Shade plugin, far JARs are generally a developer convenience and should not be published to Maven Central unless required by downstream consumers"
+    fi
+  fi
+
+  # Warn if module is publishing tests or test-sources JARs
+  if grep -F "tests.jar" ${OUTPUT_DIR}${MODULE}-release-files.txt >/dev/null 2>&1; then
+    if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
+      warn "Maven Module ${MODULE} publishes a tests classifier JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar packaging for this module"
+    else
+      info "Maven Module ${MODULE} publishes a tests classifier JAR that is an internal project dependency of other modules"
+    fi
+  fi
+  if grep -F "test-sources.jar" ${OUTPUT_DIR}${MODULE}-release-files.txt >/dev/null 2>&1; then
+    if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
+      warn "Maven Module ${MODULE} publishes a test-sources JAR for a tests classifer JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar source attachement for this module"
+    fi
+  fi
+
+  # Warn if multiple SBOM formats published
+  SBOM_COUNT=$(ls "${BUNDLE_DIR}" | grep -F "cyclonedx" 2>&1 | grep -v -F ".asc" 2>&1 | wc -l | tr -d ' ')
+  if [ ${SBOM_COUNT} -gt 1 ]; then
+    warn "Maven Module ${MODULE} publishes multiple CycloneDX SBOM formats, SBOMs contain identical data so consider publishing only one format"
+    ls "${BUNDLE_DIR}" | grep -F "cyclonedx" | grep -v -F ".asc"
+  fi
+
+done 3< ${OUTPUT_DIR}bundle-directories.txt
+blankLine
+info "Maven Project publishes ${TOTAL_FILES} release files"
+# Bundles don't contain generated hashes so need to account for those
+TOTAL_HASH_FILES=$(( (${TOTAL_FILES} / 2) * ${HASHES_PER_FILE}))
+info "An additional ${TOTAL_HASH_FILES} hash files will also be published"
+if [ ${HASHES_PER_FILE} -eq 4 ]; then
+  warn "Central Publishing plugin is configured to publish all hashes which generates 2 additional hashes per release file than if you had configured <checksums>required</checksums> on the plugin"
+fi
+if [ ${HASHES_PER_FILE} -eq 4 ]; then
+  info "Hash files will add an additional $(bytesToHuman $(( ${TOTAL_HASH_FILES} * 264))) bytes of hash files"
+else
+  info "Hash files will add an additional $(bytesToHuman $(( ${TOTAL_HASH_FILES} * 72))) bytes of hash files"
+fi
+blankLine
+info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
