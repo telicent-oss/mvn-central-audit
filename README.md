@@ -1,9 +1,9 @@
 # Maven Central Audit
 
-With the incoming enforcement of Maven Central publisher usage limits many publishers, including my employers, are
-having to figure out whether they can be more efficient in what they publish to Maven Central to reduce their usage. The
-script in this repository is designed to audit Maven projects to analyse what they would release and highlight any
-obvious problems.
+With the incoming enforcement of Maven Central publisher usage limits many publishers, including Telicent, are having to
+figure out whether they can be more efficient in what they publish to Maven Central to reduce their usage. The script in
+this repository is designed to audit Maven projects to analyse what they would release and highlight any obvious
+problems.
 
 # Requirements
 
@@ -78,7 +78,7 @@ MD5 hash of the Maven project directory the script is run against.  You can manu
 if you wish to understand more about how the audit works.
 
 However for most users the script logs human readable output about it's progress and findings which should be
-sufficient, e.g.,
+sufficient, e.g., output for a local clone of our https://github.com/telicent-oss/jena-fuseki-kafka repository:
 
 ```
 [Tue  7 Jul 2026 11:46:27 BST] INFO: Temporary Output Files will be written to /tmp/a89b9a8ec02b4448581d052334e8de81/
@@ -303,3 +303,7 @@ Here's an example audit report:
   ]
 }
 ```
+
+# License
+
+This is open source code under the [Apache License 2.0](LICENSE), please see [NOTICE](NOTICE) for Copyright Notices.
