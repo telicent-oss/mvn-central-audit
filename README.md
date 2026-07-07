@@ -36,6 +36,14 @@ from e.g.
 /path/to/mvn-central-audit/audit.sh 4
 ```
 
+## Environment Variables
+
+- `TMPDIR` - If set this is used as the base of the [Output Directory](#outputs)
+- `OUTPUT_DIR` - If set this is used as the output directory ignoring `TMPDIR`
+
+> You **MUST NOT** set `OUTPUT_DIR` to a directory within the Maven project directory you are trying to audit, otherwise
+> some of the `mvn` commands run may wipe this directory unexpectedly and cause script failures.
+
 # What it does
 
 The script runs an 8 step audit process, the outputs of each step are written to a temporary directory under
@@ -100,10 +108,11 @@ and they will already be accounted for in the report total release files and siz
 
 ## Outputs
 
-As already noted various output files are produced to a temporary directory named `/tmp/<hash>` where `<hash>` is the
-MD5 hash of the Maven project directory the script is run against.  You can manually inspect the files in this directory
-if you wish to understand more about how the audit script works, and how each step records some calculated information
-to allow subsequent steps to proceed from that recording state without re-running the whole audit each time.
+As already noted various output files are by default produced to a temporary directory named `/tmp/<hash>` where
+`<hash>` is the MD5 hash of the Maven project directory the script is run against.  This can be customised via
+[environment variables](#environment-variables).  You can manually inspect the files in this directory if you wish to
+understand more about how the audit script works, and how each step records some calculated information to allow
+subsequent steps to proceed from that recording state without re-running the whole audit each time.
 
 For most users the script producing human readable logging output about it's progress and findings which should be
 informative, e.g., output for a local clone of our https://github.com/telicent-oss/jena-fuseki-kafka repository:
@@ -193,6 +202,7 @@ The report starts with summary information:
 - `hashFilesSize` - Total size in bytes of the hash files for the release
 - `totalFiles` - Total number of release files a release will generate including `hashFiles`
 - `totalSize` - Total size in bytes that a release will generate including `hashFilesSize`
+- `warnings` - Total number of warnings reported across all published modules
 
 It then goes into detailed per-module reports, each item in the `modules` array contains the following:
 
@@ -214,6 +224,7 @@ Here's an example audit report:
   "hashFilesSize": "1872",
   "totalFiles": "52",
   "totalSize": "1234317",
+  "warnings": 1,
   "modules": [
     {
       "module": "jena-fuseki-kafka-module",
@@ -343,7 +354,7 @@ Here's an example audit report:
 
 ### Exit Codes
 
-1. If a required command is missing then it exists with a `126` status
+1. If a required command is missing then it exits with a `126` status
 2. If the script is interrupted (by `SIGINT`, `SIGQUIT` or `SIGTERM`) then it exits with a `127` status
     - For other non-catchable signals that abort the script the exit status will be non-zero but may depend on the OS
 3. If a [Step](#steps) fails then it will exit with the step number as the status, e.g. `3` if the Quick Maven Build
@@ -358,7 +369,7 @@ repositories compared with usage report on Maven Central:
 ![Example Comparison of Audit Report and Maven Central Usage](example-comparison.png)
 
 > *NB* From our testing it appears that Maven Central Usage reports uses metric units when converting reported Release
-> Size in human readable format.  Therefore wherever this script reports a human readable size it uses this convention
+> Size into human readable format.  Therefore wherever this script reports a human readable size it uses this convention
 > for the conversion.
 
 However, the script relies on some introspection of Maven `help:effective-pom` files via XPath, Maven property

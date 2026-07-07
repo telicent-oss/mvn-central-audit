@@ -1,0 +1,135 @@
+name: Maven Central Audit Action
+description: |
+  An action that audits a Maven project to see what would be released to Maven Central and highlights any potential
+  problems.
+
+  The action will fail if the audit finds the total files/total file sizes exceeds configured limits.
+author: Rob Vesse
+branding:
+  icon: "git-pull-request"
+  color: "purple"
+inputs:
+  max-files:
+    required: false
+    default: "100"
+    description: |
+      Specifies the limit on the number of release files, if a release exceeds this then the action will fail.
+      
+      Defaults to 100 which should be sufficient for a small project that produces a handful of modules, and this
+      represents 10% of the current monthly free usage limit of 1000 files.
+
+      If a zero/negative value is supplied then this limit is not enforced.
+  max-size:
+    required: false
+    default: "8000000"
+    description: |
+      Specifies the limit on the size in bytes of the release files, if a release exceeds this then the action will
+      fail.
+      
+      Defaults to 8000000, i.e. 8MB, which should be sufficient for a small project.  This represents 10% of the current
+      monthly free usage limit of 80MB.
+
+      If a zero/negative value is supplied then this limit is not enforced.
+  artifact-suffix:
+    required: false
+    default: "${{ github.run_id }}-${{ github.run_attempt }}"
+    description: |
+      Specifies an optional suffix for the artifact that is uploading containing the audit report
+runs:
+  using: composite
+  steps:
+    - name: Checkout Audit Script
+      uses: actions/checkout@v7
+      with:
+        sparse-checkout: |
+          audit.sh
+        sparse-checkout-cone-mode: false
+        repository: Telicent-io/mvn-central-audit
+        path: mvn-central-audit/
+        ref: v1
+
+    # NB - actions/checkout only allows us to checkout into the workspace directory not the temp directory so have to
+    #      manually move the directory
+    #      We move the checked out script because it could be flagged by various linters that a Maven project might be
+    #      using so moving it into the runner temporary directory avoids that possibility
+    - name: Move Audit Script to Runner Temp Directory
+      shell: bash
+      run: |
+        mv mvn-central-audit ${{ runner.temp }}
+        ls -l ${{ runner.temp }}
+
+    - name: Install xidel
+      uses: jaxxstorm/action-install-gh-release@v3.0.0
+      with: 
+        repo: benibela/xidel
+        tag: Xidel_0.9.8
+        cache: enable
+        platform: linux
+        arch: 64
+
+    - name: Maven Central Audit
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ runner.temp }}/mvn-central-audit/
+      run: |
+        ${{ runner.temp }}/mvn-central-audit/audit.sh
+
+    # As we're going to use the scan name for both output file names and GitHub Actions Artifacts have to sanitise it
+    # to remove characters that are disallowed, or would cause those usages to break
+    #
+    # For GitHub Actions Artifacts this is as follows:
+    # 
+    # Double quote ", Colon :, Less than <, Greater than >, Vertical bar |, Asterisk *, Question mark ?, Carriage 
+    # return \r, Line feed \n, Backslash \, Forward slash /
+    #
+    # These characters are not allowed in the artifact name due to limitations with certain file systems such as NTFS. 
+    # To maintain file system agnostic behavior, these characters are intentionally not allowed to prevent potential 
+    # problems with downloads on different file systems.
+
+    - name: Sanitise Artifact Name
+      if: ${{ always() }}
+      id: sanitised
+      shell: bash
+      run: |
+        echo "suffix=$(echo '${{ inputs.artifact-suffix }}' | sed 's/[:/<>|*?\]/-/g' | tr -s '-')" >> $GITHUB_OUTPUT
+
+    - name: Upload Audit Report
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: maven-central-audit-${{ steps.sanitised.outputs.suffix }}
+        path: |
+          ${{ runner.temp }}/mvn-central-audit/audit-report.json
+          ${{ runner.temp }}/mvn-central-audit/maven-modules.txt
+          ${{ runner.temp }}/mvn-central-audit/published-maven-modules.txt
+          ${{ runner.temp }}/mvn-central-audit/*.log
+        if-no-files-found: ignore
+        retention-days: 7
+
+    - name: Enforce Release limits.
+      shell: bash
+      run: |
+        TOTAL_FILES=$(cat ${{ runner.temp }}/mvn-central-audit/audit-report.json | jq -r .totalFiles)
+        TOTAL_SIZE=$(cat ${{ runner.temp }}/mvn-central-audit/audit-report.json | jq -r .totalSize)
+
+        ERRORS=0
+        if [ "${{ inputs.max-files }}" -gt 0 ] && [ ${TOTAL_FILES} -gt "${{ inputs.max-files }}" ]; then
+          echo "::error::Maven Central audit indicates ${TOTAL_FILES} would be released and action is configured with limit ${{ inputs.max-files }}"
+          ERRORS=$(( ${ERRORS} + 1))
+        fi
+        if [ "${{ inputs.max-size }}" -gt 0 ] && [ ${TOTAL_SIZE} -gt "${{ inputs.max-size }}" ]; then
+          echo "::error::Maven Central audit indicates ${TOTAL_SIZE} bytes would be released and action is configured with limit ${{ inputs.max-size }}"
+          ERRORS=$(( ${ERRORS} + 1))
+        fi
+
+        # Fail the action if any limits exceeded
+        if [ ${ERRORS} -gt 0 ]; then
+          exit ${ERRORS}
+        fi
+
+    - name: Remove Temporary Directory
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        rm -Rf "${{ runner.temp }}/mvn-central-audit/" >/dev/null 2>&1
+    

@@ -50,8 +50,21 @@ function requireCommands() {
   done
 }
 
+function md5hash() {
+  local INPUT=$1
+  if command -v md5 >/dev/null 2>&1; then
+    echo "${INPUT}" | md5
+  elif command -v md5sum >/dev/null 2>&1; then
+    echo "${INPUT}" | md5sum | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    echo "${INPUT}" | openssl md5 | awk '{print $2}'
+  else
+    abort 126 "No suitable command to calculate a MD5 hash available"
+  fi
+}
+
 # Check necessary commands are present
-requireCommands mvn xidel jq awk printf md5 echo rm read grep sed cat
+requireCommands mvn xidel jq awk printf echo rm read grep sed cat tr
 
 function aborted() {
     abort 127 "Aborted due to user/OS interrupt"
@@ -72,11 +85,15 @@ function bytesToHuman() {
     echo "$b$d ${S[$s]}"
 }
 
-OUTPUT_DIR="/tmp/$(echo "$PWD" | md5)"
-if ! mkdir -p ${OUTPUT_DIR}/; then
-  abort 1 "Failed to create temporary output directory ${OUTPUT_DIR}/"
+if [ -z "${OUTPUT_DIR}" ]; then
+  OUTPUT_DIR="${TMPDIR:-/tmp/}$(md5hash "$PWD")"
 fi
-info "Temporary Output Files will be written to ${OUTPUT_DIR}/"
+OUTPUT_DIR=${OUTPUT_DIR%/}
+if ! mkdir -p ${OUTPUT_DIR}/; then
+  abort 1 "Failed to create temporary output directory ${OUTPUT_DIR}"
+fi
+info "Maven Project Directory is ${PWD}"
+info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
 
 # Firstly verify that this is a Maven project directory
 blankLine
@@ -107,7 +124,7 @@ blankLine
 info "Step 3: Quick Building the Maven Project"
 if [ ${STEP} -le 3 ]; then
     info "Quick building the Maven Project (skipping tests, GPG signing, CycloneDX SBOMs, Javadoc, Source and Delombok)"
-    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip -q ; then
+    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip > "${OUTPUT_DIR}/quick-build.log" 2>&1 ; then
       abort 3 "Failed to quick build the Maven project"
     fi
     info "Maven project quick builds OK"
@@ -123,6 +140,9 @@ if [ ${STEP} -le 4 ]; then
     fi
 else
     info "Skipped at user request"
+fi
+if [ ! -f "${OUTPUT_DIR}/maven-modules.txt" ]; then
+  abort 4 "No Maven Modules file, you may need to re-run this script from an earlier step"
 fi
 TOTAL_MODULES=$(wc -l ${OUTPUT_DIR}/maven-modules.txt | awk '{print $1}' | tr -d ' ')
 info "Found ${TOTAL_MODULES} Maven modules in this project"
@@ -170,6 +190,9 @@ else
     fi
 fi
 
+if [ ! -f "${OUTPUT_DIR}/published-maven-modules.txt" ]; then
+  abort 5 "No published Maven modules file found in output directory, you may need to re-run this script from an earlier step"
+fi
 PUBLISHED_MODULES=$(wc -l ${OUTPUT_DIR}/published-maven-modules.txt | awk '{print $1}' | tr -d ' ')
 info "${PUBLISHED_MODULES}/${TOTAL_MODULES} modules are published to Maven Central"
 if [ ${PUBLISHED_MODULES} -eq 0 ]; then
@@ -206,6 +229,11 @@ if [ ${STEP} -le 7 ]; then
     info "Maven Module ${MODULE} has bundle directory ${BUNDLE_DIR}"
     echo "${MODULE} ${BUNDLE_DIR}" >> ${OUTPUT_DIR}/bundle-directories.txt
   done 3< ${OUTPUT_DIR}/published-maven-modules.txt
+
+  FOUND_BUNDLE_DIRS=$(cat ${OUTPUT_DIR}/bundle-directories.txt | wc -l | tr -d ' ')
+  if [ ${FOUND_BUNDLE_DIRS} -eq 0 ]; then
+    abort 7 "Failed to find any bundle directories, review ${OUTPUT_DIR}/deploy-dry-run.log to understand why Deploy Dry Run failed to produce any bundles"
+  fi
 else
     info "Skipped at user request"
 fi
@@ -237,7 +265,8 @@ while IFS= read -r -u3 BUNDLE; do
 
   # Warn if module is publishing more than 4MB of release files, this tends to imply fat JARs or some other artifacts
   # being produced that are large
-  if [ ${MODULE_FILE_SIZES} -gt 4194304 ]; then
+  # NB - Maven Central uses 1000 as the kilo-convetion for its usage reporting
+  if [ ${MODULE_FILE_SIZES} -gt 4000000 ]; then
     warn "Maven Module ${MODULE} produces more than 4MB of release files, top 5 files are as follows:"
     jsonWarn "${MODULE}" "Produces more than 4MB of release files"
     ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' | head -n 6
@@ -318,6 +347,11 @@ else
   HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 72 ))
 fi
 info "Hash files will add an additional $(bytesToHuman ${HASH_FILE_SIZES}) bytes of hash files"
+
+WARNINGS=$(cat ${OUTPUT_DIR}/*-release-files.json | jq -r '.warnings[]?' | wc -l | tr -d ' ')
+if [ ${WARNINGS} -gt 0 ]; then
+  warn "There are ${WARNINGS} warnings across the published modules, please review the audit report and see if any need addressing"
+fi
 blankLine
 info "Total Files (including Hashes): $(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))"
 info "Total Release Size (including Hashes): $(bytesToHuman $(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} )))"
@@ -325,6 +359,6 @@ info "Total Release Size (including Hashes): $(bytesToHuman $(( ${TOTAL_FILE_SIZ
 # Produce the JSON format reports from the accumulated module reports
 blankLine
 cat ${OUTPUT_DIR}/*-release-files.json | jq --slurp -c '.[] | { modules: [.]}' \
-  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} ))\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}/audit-report.json
+  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} ))\", warnings: \"${WARNINGS}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}/audit-report.json
 info "JSON Audit Report available as ${OUTPUT_DIR}/audit-report.json"
 

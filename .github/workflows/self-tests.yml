@@ -1,0 +1,90 @@
+name: Self Tests
+
+# Run workflow for any push to a branch/tag
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+
+# Only permit one build per branch/tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Small Release passes
+            repository: telicent-oss/jena-fuseki-kafka
+            success: true
+            
+          - name: Large Release with Default Limits fails
+            repository: telicent-oss/smart-caches-core
+            success: false
+
+          - name: Large Release with Increased Limits passes
+            repository: telicent-oss/smart-caches-core
+            max-files: 500
+            max-size: 15000000 # 15MB
+            success: true
+
+          - name: Large Release with Disabled Limits passes
+            repository: telicent-oss/smart-caches-core
+            max-files: 0
+            max-size: 0
+            success: true
+
+          - name: Fails on non-Maven repository
+            repository: ${{ github.repository }}
+            success: false
+            
+    name: ${{ matrix.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ matrix.repository }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        continue-on-error: true
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Import GPG Key
+        uses: crazy-max/ghaction-import-gpg@v7
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Run action
+        id: mvn-central-audit
+        uses: Telicent-io/mvn-central-audit@v1
+        continue-on-error: true
+        with:
+          max-files: ${{ case(matrix.max-files != '', matrix.max-files, 100) }}
+          max-size: ${{ case(matrix.max-size != '', matrix.max-size, 10000000) }}
+          artifact-suffix: ${{ matrix.repository }}
+
+      - name: Verify Success
+        if: ${{ matrix.success == true }}
+        run: |
+          if [ "${{ steps.mvn-central-audit.outcome }}" != "success" ]; then
+            echo "::error::Maven Central Audit failed when success was expected"
+            exit 1
+          fi
+
+      - name: Verify Failure
+        if: ${{ matrix.success != true }}
+        run: |
+          if [ "${{ steps.mvn-central-audit.outcome }}" != "failure" ]; then
+            echo "::error::Maven Central Audit did not fail as expected"
+          fi
