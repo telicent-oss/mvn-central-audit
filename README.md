@@ -5,12 +5,19 @@ figure out whether they can be more efficient in what they publish to Maven Cent
 this repository is designed to audit Maven projects to analyse what they would release and highlight any obvious
 problems.
 
+Please see [Outputs](#outputs) for example output.
+
 # Requirements
 
-- The `mvn` tool installed on your `PATH`
-- The `xidel` tool installed on your `PATH` - this is used to apply XPath expressions to effective module POM files to
+The following tools are required to be present on your `PATH`:
+
+- `mvn`
+- `xidel` - this is used to apply XPath expressions to effective module POM files to
   help determine some release/plugin configurations
-- The `jq` tool installed on your `PATH` - this is used to help prepare the JSON [audit report](#outputs)
+- `jq` - this is used to help prepare the JSON [audit report](#outputs)
+
+Additionally the script requires on various standard POSIX commands and/or Bash built-ins.  The script will exit
+immediately if any of the required commands are not found.
 
 # Run
 
@@ -73,23 +80,33 @@ For each published module the following audit checks are carried out:
 - If a module produces CycloneDX SBOMs checks whether multiple SBOM formats are being produced.
     - If so issues a warning since SBOMs will contain the same data and no need to publish multiple formats to Maven
       Central
+- If the Central Publishing plugin is configured with `<checksums>none</checksums>` and the module does not produce any
+  checksum files then a warning is issued
 
 Once these have run on all modules a summary is also printed showing the total number of release files and total release
 size in bytes.
 
-Additionally the audit script calculates how many additional hash files will need to be published with the release and
-how large those would be.  If your project is configured to produce all checksum formats then a warning will be issued
-suggesting that you configure the Maven Central publishing plugin to only publish `required` checksums to reduce total
-number of release files.
+## Audit Summary
+
+Finally the audit script calculates how many additional hash files will need to be published with the release and how
+large those would be.
+
+If your project is configured to produce all checksum formats then a warning will be issued suggesting that you
+configure the Maven Central publishing plugin to only publish `required` checksums to reduce total number of release
+files.
+
+Similarly if the plugin is configured with `none` checksums then the script assumes your build produces those checksums
+and they will already be accounted for in the report total release files and sizes.
 
 ## Outputs
 
 As already noted various output files are produced to a temporary directory named `/tmp/<hash>` where `<hash>` is the
 MD5 hash of the Maven project directory the script is run against.  You can manually inspect the files in this directory
-if you wish to understand more about how the audit works.
+if you wish to understand more about how the audit script works, and how each step records some calculated information
+to allow subsequent steps to proceed from that recording state without re-running the whole audit each time.
 
-However for most users the script logs human readable output about it's progress and findings which should be
-sufficient, e.g., output for a local clone of our https://github.com/telicent-oss/jena-fuseki-kafka repository:
+For most users the script producing human readable logging output about it's progress and findings which should be
+informative, e.g., output for a local clone of our https://github.com/telicent-oss/jena-fuseki-kafka repository:
 
 ```
 [Tue  7 Jul 2026 11:46:27 BST] INFO: Temporary Output Files will be written to /tmp/a89b9a8ec02b4448581d052334e8de81/
@@ -163,7 +180,9 @@ sufficient, e.g., output for a local clone of our https://github.com/telicent-os
 
 ```
 
-As seen at the end of the exampler log output it also prepares an `audit-report.json` file that contains a summary of
+### Audit Report JSON
+
+As seen at the end of the example log output it also prepares an `audit-report.json` file that contains a summary of
 the audit.
 
 The report starts with summary information:
@@ -322,6 +341,15 @@ Here's an example audit report:
 }
 ```
 
+### Exit Codes
+
+1. If a required command is missing then it exists with a `126` status
+2. If the script is interrupted (by `SIGINT`, `SIGQUIT` or `SIGTERM`) then it exits with a `127` status
+    - For other non-catchable signals that abort the script the exit status will be non-zero but may depend on the OS
+3. If a [Step](#steps) fails then it will exit with the step number as the status, e.g. `3` if the Quick Maven Build
+step failed.
+4. If the script runs successfully then it exits with a `0` status.
+
 ### How accurate is this?
 
 The script has been designed to be as accurate as possible, for example here's an audit on another of our open source
@@ -329,9 +357,23 @@ repositories compared with usage report on Maven Central:
 
 ![Example Comparison of Audit Report and Maven Central Usage](example-comparison.png)
 
-However it does rely on some introspection of Maven `help:effective-pom` files via XPath and Maven property evaluation
-(via `exec:exec`).  Therefore it's possible it may not correctly identify all published modules and release files
-correctly.
+> *NB* From our testing it appears that Maven Central Usage reports uses metric units when converting reported Release
+> Size in human readable format.  Therefore wherever this script reports a human readable size it uses this convention
+> for the conversion.
+
+However, the script relies on some introspection of Maven `help:effective-pom` files via XPath, Maven property
+evaluation (via `exec:exec`) and inspecting the Central Publishing Plugins temporary staging directories.  Therefore
+it's possible it may not correctly identify all published modules and release files correctly depending on your Maven
+project.
+
+Also since the Maven Central usage report does not provide fine-grained data you can only really do this comparison by
+observation of a single known release at the start of the monthly reporting period (bearing in mind that Maven Central
+usage only updates once per 24 hours!).
+
+# Contributing
+
+We welcome PRs that improve the accuracy/efficiency of this script, or add additional audit checks based on issues it's
+helped you identify in your Maven projects that are not currently flagged as warnings.
 
 # License
 
