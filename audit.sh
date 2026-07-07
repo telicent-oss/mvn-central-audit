@@ -20,6 +20,12 @@ function warn() {
     log "WARN" $* 1>&2
 }
 
+function jsonWarn() {
+  local TARGET=$1
+  local MSG=$2
+  echo "{ \"warnings\": [ \"${MSG}\" ]}" >> ${OUTPUT_DIR}${TARGET}-warnings.json
+}
+
 function error() {
     log "ERROR" $* 1>&2
 }
@@ -194,12 +200,14 @@ blankLine
 info "Step 8: Auditing Maven Central bundles"
 while IFS= read -r -u3 BUNDLE; do
   MODULE=$(echo ${BUNDLE} | awk '{print $1}')
+  blankLine
   info "Auditing Maven Central bundle for Maven Module ${MODULE}..."
   BUNDLE_DIR=$(echo ${BUNDLE} | awk '{print $2}')
   if [ ! -d "${BUNDLE_DIR}" ]; then
     error "Failed to find Bundle directory ${BUNDLE_DIR} for Maven Module ${MODULE}"
     continue
   fi
+  rm -f ${OUTPUT_DIR}${MODULE}-warnings.json >/dev/null 2>&1
 
   MODULE_FILES=$(ls "${BUNDLE_DIR}" | grep -v maven-metadata | wc -l | tr -d ' ')
   TOTAL_FILES=$(( ${TOTAL_FILES} + ${MODULE_FILES} ))
@@ -214,11 +222,13 @@ while IFS= read -r -u3 BUNDLE; do
   # being produced that are large
   if [ ${MODULE_FILE_SIZES} -gt 4194304 ]; then
     warn "Maven Module ${MODULE} produces more than 4MB of release files, top 5 files are as follows:"
+    jsonWarn "${MODULE}" "Produces more than 4MB of release files"
     ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' | head -n 6
 
     # Check for obvious causes of fat JARs
     if xidel -se "//plugin[artifactId='maven-shade-plugin']"; then
       warn "Maven Module ${MODULE} uses the Shade plugin, far JARs are generally a developer convenience and should not be published to Maven Central unless required by downstream consumers"
+      jsonWarn "${MODULE}" "Uses the Shade plugin to produce fat JARs which most likely should not be published to Maven Central"
     fi
   fi
 
@@ -226,6 +236,7 @@ while IFS= read -r -u3 BUNDLE; do
   if grep -F "tests.jar" ${OUTPUT_DIR}${MODULE}-release-files.txt >/dev/null 2>&1; then
     if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
       warn "Maven Module ${MODULE} publishes a tests classifier JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar packaging for this module"
+      jsonWarn "${MODULE}" "Publishes a tests classifier JAR that is not used as a dependency within this project.  If not required by downstream consumers consider skipping test-jar packaging for this module"
     else
       info "Maven Module ${MODULE} publishes a tests classifier JAR that is an internal project dependency of other modules"
     fi
@@ -233,6 +244,7 @@ while IFS= read -r -u3 BUNDLE; do
   if grep -F "test-sources.jar" ${OUTPUT_DIR}${MODULE}-release-files.txt >/dev/null 2>&1; then
     if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
       warn "Maven Module ${MODULE} publishes a test-sources JAR for a tests classifer JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar source attachement for this module"
+      jsonWarn "${MODULE}" "Publishes a test-sources JAR for a tests classifier JAR that is not used as a dependency within this project.  If not required by downstream consuemrs consider skipping test-jar source attachment for this module"
     fi
   fi
 
@@ -240,8 +252,26 @@ while IFS= read -r -u3 BUNDLE; do
   SBOM_COUNT=$(ls "${BUNDLE_DIR}" | grep -F "cyclonedx" 2>&1 | grep -v -F ".asc" 2>&1 | wc -l | tr -d ' ')
   if [ ${SBOM_COUNT} -gt 1 ]; then
     warn "Maven Module ${MODULE} publishes multiple CycloneDX SBOM formats, SBOMs contain identical data so consider publishing only one format"
+    jsonWarn "${MODULE}" "Publishes multiple CycloneDX SBOM formats, consider publishing only one format"
     ls "${BUNDLE_DIR}" | grep -F "cyclonedx" | grep -v -F ".asc"
   fi
+
+  # Produce the JSON format output for this module which we'll later collate
+  info "Preparing JSON report for module..."
+  ls -lS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' \
+      | sed '/^[[:blank:]]*$/d' \
+      | jq --raw-input --slurp -rc 'splits("\n") | split(" ") | select(. != []) | {file: .[0], size: .[1] }' \
+      | jq --slurp "{ module: \"${MODULE}\", files: [.[]]}" \
+      | jq --slurp 'reduce .[] as $item ({}; . * $item)' > ${OUTPUT_DIR}${MODULE}-release-files.json
+  if [ -f "${OUTPUT_DIR}${MODULE}-warnings.json" ]; then
+    info "Merging warnings into JSON report"
+    mv ${OUTPUT_DIR}${MODULE}-warnings.json ${OUTPUT_DIR}${MODULE}-warnings.json.temp >/dev/null 2>&1
+    cat ${OUTPUT_DIR}${MODULE}-warnings.json.temp | jq --slurp '{ warnings: [ .[].warnings[]] }' > ${OUTPUT_DIR}${MODULE}-warnings.json
+    mv ${OUTPUT_DIR}${MODULE}-release-files.json ${OUTPUT_DIR}${MODULE}-release-files.json.temp >/dev/null 2>&1
+    cat ${OUTPUT_DIR}${MODULE}-release-files.json.temp ${OUTPUT_DIR}${MODULE}-warnings.json \
+      | jq --slurp 'reduce .[] as $item({}; . * $item)' > ${OUTPUT_DIR}${MODULE}-release-files.json
+  fi
+  info "Maven Module ${MODULE} audit complete"
 
 done 3< ${OUTPUT_DIR}bundle-directories.txt
 blankLine
@@ -253,9 +283,18 @@ if [ ${HASHES_PER_FILE} -eq 4 ]; then
   warn "Central Publishing plugin is configured to publish all hashes which generates 2 additional hashes per release file than if you had configured <checksums>required</checksums> on the plugin"
 fi
 if [ ${HASHES_PER_FILE} -eq 4 ]; then
-  info "Hash files will add an additional $(bytesToHuman $(( ${TOTAL_HASH_FILES} * 264))) bytes of hash files"
+  # All four hashes (md5, sha1, sha256 and sha512 total 264 bytes)
+  HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 264 ))
 else
-  info "Hash files will add an additional $(bytesToHuman $(( ${TOTAL_HASH_FILES} * 72))) bytes of hash files"
+  # Minimum required hashes (md5, sha1 total 72 bytes)
+  HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 72 ))
 fi
+info "Hash files will add an additional $(bytesToHuman ${HASH_FILE_SIZES}) bytes of hash files"
 blankLine
 info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
+
+# Produce the JSON format reports from the accumulated module reports
+cat ${OUTPUT_DIR}*-release-files.json | jq --slurp -c '.[] | { modules: [.]}' \
+  | jq --slurp "{totalFiles: \"${TOTAL_FILES}\", totalSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}audit-report.json
+info "JSON Audit Report available as ${OUTPUT_DIR}audit-report.json"
+
