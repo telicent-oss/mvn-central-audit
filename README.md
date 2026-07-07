@@ -10,7 +10,7 @@ problems.
 - The `mvn` tool installed on your `PATH`
 - The `xidel` tool installed on your `PATH` - this is used to apply XPath expressions to effective module POM files to
   help determine some release/plugin configurations
-- The `jq` tool installed on your `PATH` - this is used to help prepare the JSON [audit report](#output)
+- The `jq` tool installed on your `PATH` - this is used to help prepare the JSON [audit report](#outputs)
 
 # Run
 
@@ -20,12 +20,23 @@ From a Maven project directory simply run `audit.sh` e.g.
 /path/to/mvn-central-audit/audit.sh
 ```
 
-## What it does
+## Run Options
+
+A single command line parameter is supported to indicate which [Step](#steps) of the audit process you wish to resume
+from e.g.
+
+```bash
+/path/to/mvn-central-audit/audit.sh 4
+```
+
+# What it does
 
 The script runs an 8 step audit process, the outputs of each step are written to a temporary directory under
 `/tmp/<hash>` where `<hash>` is the `md5` hash of the directory you are running the script against i.e. each unique
 Maven project directory you run this script against has unique isolated outputs.  This means the script can be run
 against many Maven project directories safely in parallel.
+
+## Steps
 
 The 8 steps are as follows:
 
@@ -47,7 +58,7 @@ allows you to skip checks if you make changes based on the audit report that don
 script.  To do this supply the desired starting step as an argument to this script e.g. `audit.sh 5` restarts from the
 published module detection step if you had made some changes to skip publishing certain modules.
 
-### Audit Checks
+## Audit Checks
 
 For each published module the following audit checks are carried out:
 
@@ -71,7 +82,7 @@ how large those would be.  If your project is configured to produce all checksum
 suggesting that you configure the Maven Central publishing plugin to only publish `required` checksums to reduce total
 number of release files.
 
-### Output
+## Outputs
 
 As already noted various output files are produced to a temporary directory named `/tmp/<hash>` where `<hash>` is the
 MD5 hash of the Maven project directory the script is run against.  You can manually inspect the files in this directory
@@ -140,11 +151,14 @@ sufficient, e.g., output for a local clone of our https://github.com/telicent-os
 [Tue  7 Jul 2026 11:47:37 BST] INFO: Merging warnings into JSON report
 [Tue  7 Jul 2026 11:47:37 BST] INFO: Maven Module jena-fuseki-kafka-module audit complete
 
-[Tue  7 Jul 2026 11:47:37 BST] INFO: Maven Project publishes 26 release files
-[Tue  7 Jul 2026 11:47:37 BST] INFO: An additional 26 hash files will also be published
-[Tue  7 Jul 2026 11:47:37 BST] INFO: Hash files will add an additional 1.82 KiB bytes of hash files
+[Tue  7 Jul 2026 13:18:13 BST] INFO: Maven Project publishes 26 release files
+[Tue  7 Jul 2026 13:18:13 BST] INFO: Maven Project publishes 1.23 MB bytes of release files
+[Tue  7 Jul 2026 13:18:13 BST] INFO: An additional 26 hash files will also be published
+[Tue  7 Jul 2026 13:18:13 BST] INFO: Hash files will add an additional 1.87 KB bytes of hash files
 
-[Tue  7 Jul 2026 11:47:37 BST] INFO: Maven Project publishes 1.17 MiB bytes of release files
+[Tue  7 Jul 2026 13:18:13 BST] INFO: Total Files (including Hashes): 52
+[Tue  7 Jul 2026 13:18:13 BST] INFO: Total Release Size (including Hashes): 1.23 MB
+
 [Tue  7 Jul 2026 11:47:37 BST] INFO: JSON Audit Report available as /tmp/a89b9a8ec02b4448581d052334e8de81/audit-report.json
 
 ```
@@ -154,10 +168,12 @@ the audit.
 
 The report starts with summary information:
 
-- `totalFiles` - Total number of release files a release will generate (this does not include `hashFiles`)
-- `totalSize` - Total size in bytes that a release will generate (this does not include the additional `hashFilesSize`)
-- `hashFiles` - How many additional hash files will be published by a release
+- `releaseFiles` - How many release files will be published by a release (excluding hash files)
+- `releaseFilesSize` - Total size in bytes of the release files (excluding hash files)
+- `hashFiles` - How many hash files will be published by a release
 - `hashFilesSize` - Total size in bytes of the hash files for the release
+- `totalFiles` - Total number of release files a release will generate including `hashFiles`
+- `totalSize` - Total size in bytes that a release will generate including `hashFilesSize`
 
 It then goes into detailed per-module reports, each item in the `modules` array contains the following:
 
@@ -173,10 +189,12 @@ Here's an example audit report:
 
 ```json
 {
-  "totalFiles": "26",
-  "totalSize": "1232445",
+  "releaseFiles": "26",
+  "releaseFilesSize": "1232445",
   "hashFiles": "26",
   "hashFilesSize": "1872",
+  "totalFiles": "52",
+  "totalSize": "1234317",
   "modules": [
     {
       "module": "jena-fuseki-kafka-module",
@@ -303,6 +321,17 @@ Here's an example audit report:
   ]
 }
 ```
+
+### How accurate is this?
+
+The script has been designed to be as accurate as possible, for example here's an audit on another of our open source
+repositories compared with usage report on Maven Central:
+
+![Example Comparison of Audit Report and Maven Central Usage](example-comparison.png)
+
+However it does rely on some introspection of Maven `help:effective-pom` files via XPath and Maven property evaluation
+(via `exec:exec`).  Therefore it's possible it may not correctly identify all published modules and release files
+correctly.
 
 # License
 

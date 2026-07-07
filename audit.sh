@@ -51,10 +51,10 @@ function bytesToHuman() {
     local b=${1:-0}
     local d=''
     local s=0
-    local S=(Bytes {K,M,G,T,E,P,Y,Z}iB)
-    while ((b >= 1024)); do
-        d="$(printf ".%02d" $((b % 1024 * 100 / 1024)))"
-        b=$((b / 1024))
+    local S=(Bytes {K,M,G,T,E,P,Y,Z}B)
+    while ((b >= 1000)); do
+        d="$(printf ".%02d" $((b % 1000 * 100 / 1000)))"
+        b=$((b / 1000))
         let s++
     done
     echo "$b$d ${S[$s]}"
@@ -276,6 +276,7 @@ while IFS= read -r -u3 BUNDLE; do
 done 3< ${OUTPUT_DIR}bundle-directories.txt
 blankLine
 info "Maven Project publishes ${TOTAL_FILES} release files"
+info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
 # Bundles don't contain generated hashes so need to account for those
 TOTAL_HASH_FILES=$(( (${TOTAL_FILES} / 2) * ${HASHES_PER_FILE}))
 info "An additional ${TOTAL_HASH_FILES} hash files will also be published"
@@ -291,10 +292,12 @@ else
 fi
 info "Hash files will add an additional $(bytesToHuman ${HASH_FILE_SIZES}) bytes of hash files"
 blankLine
-info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
+info "Total Files (including Hashes): $(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))"
+info "Total Release Size (including Hashes): $(bytesToHuman $(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} )))"
 
 # Produce the JSON format reports from the accumulated module reports
+blankLine
 cat ${OUTPUT_DIR}*-release-files.json | jq --slurp -c '.[] | { modules: [.]}' \
-  | jq --slurp "{totalFiles: \"${TOTAL_FILES}\", totalSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}audit-report.json
+  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} ))\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}audit-report.json
 info "JSON Audit Report available as ${OUTPUT_DIR}audit-report.json"
 
