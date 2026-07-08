@@ -5,6 +5,8 @@ figure out whether they can be more efficient in what they publish to Maven Cent
 this repository is designed to audit Maven projects to analyse what they would release and highlight any obvious
 problems.
 
+It can be run [directly](#run-directly) or as a [GitHub Action](#run-as-an-action).
+
 Please see [Outputs](#outputs) for example output.
 
 # Requirements
@@ -19,12 +21,13 @@ The following tools are required to be present on your `PATH`:
 Additionally the script requires on various standard POSIX commands and/or Bash built-ins.  The script will exit
 immediately if any of the required commands are not found.
 
-# Run
+# Run Directly
 
-From a Maven project directory simply run `audit.sh` e.g.
+Assuming you have first `git clone`'d this repository and added the working copy directory to your `PATH` then from a
+Maven project directory simply run `audit.sh` e.g.
 
 ```bash
-/path/to/mvn-central-audit/audit.sh
+audit.sh
 ```
 
 ## Run Options
@@ -33,7 +36,7 @@ A single command line parameter is supported to indicate which [Step](#steps) of
 from e.g.
 
 ```bash
-/path/to/mvn-central-audit/audit.sh 4
+audit.sh 4
 ```
 
 ## Environment Variables
@@ -43,6 +46,53 @@ from e.g.
 
 > You **MUST NOT** set `OUTPUT_DIR` to a directory within the Maven project directory you are trying to audit, otherwise
 > some of the `mvn` commands run may wipe this directory unexpectedly and cause script failures.
+
+# Run as an Action
+
+This repository also contains a composite GitHub Action that may be run, the action assumes the following things:
+
+- Your workflow has checked out the Maven project repository you wish to run the action against
+- Your workflow has already setup Java and Maven appropriately
+- Your workflow has imported a GPG Key pair for code signing, OR your project does not enable GPG signing by default.
+
+## Action Usage
+
+```yaml
+      - name: Run Maven Central Audit
+        uses: Telicent-io/mvn-central-audit@v1
+```
+
+This will install the necessary supporting tools and obtain the `audit.sh` script before running the audit.  The audit
+may fail if the script fails (see [Exit Codes](#exit-codes)), or if the produced audit report indicates that the number
+of release files/total release size exceeds the default [limits](#action-inputs)
+
+### Action Inputs
+
+The action supports the following inputs:
+
+| Input             | Required?  | Default   | Purpose                                                   |
+|-------------------|------------|-----------|-----------------------------------------------------------|
+| `max-files`       | `false`    | `100`     | Specifies the maximum permitted number of release files   |
+| `max-size`        | `false`    | `8000000` | Specifies the maximum size in bytes of the release files  |
+| `artifact-suffix` | `false`    |           | Specifies a suffix for the uploaded audit report artifact |
+
+#### Limits
+
+The `max-files` and `max-size` inputs specify limits that are imposed on the audited release, if the audit report
+indicates a release of your Maven project would exceed these then GitHub Actions errors are reported and the action will
+fail.
+
+The defaults for these limits are set at 10% of the current proposed monthly usage limits for Maven Central.
+
+Setting either limit to `0` or a negative value will disable that limit being enforced.  We would recommend running the
+audit [directly](#run-directly) against your Maven projects before adopting usage of this action.  That way you can
+address any obvious issues up front and configure appropriate limits for your project.
+
+#### Artifact Suffix
+
+The action will upload an artifact named `maven-central-audit` for your build, you can optionally add a suffix to this
+name by specifying the `artifact-suffix` input.  This may be useful if you have a job matrix that results in calling
+this action multiple times as otherwise the artifacts would conflict.
 
 # What it does
 

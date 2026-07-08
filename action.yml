@@ -32,9 +32,17 @@ inputs:
       If a zero/negative value is supplied then this limit is not enforced.
   artifact-suffix:
     required: false
-    default: "${{ github.run_id }}-${{ github.run_attempt }}"
+    default: ""
     description: |
-      Specifies an optional suffix for the artifact that is uploading containing the audit report
+      Specifies an optional suffix for the artifact that is uploading containing the audit report.  Generally should
+      only be needed if your workflow calls this action more than once, e.g. from a job matrix.
+
+      The provided name will be sanitised to ensure it only contains character safe for use in GitHub Actions artifact
+      names.
+outputs:
+  artifact-name:
+    description: The name of the uploaded GitHub Actions artifact containing the audit report and related files.
+    value: maven-central-audit${{ steps.sanitised.outputs.suffix }}
 runs:
   using: composite
   steps:
@@ -94,10 +102,11 @@ runs:
         echo "suffix=$(echo '${{ inputs.artifact-suffix }}' | sed 's/[:/<>|*?\]/-/g' | tr -s '-')" >> $GITHUB_OUTPUT
 
     - name: Upload Audit Report
+      id: upload-audit-report
       if: ${{ always() }}
       uses: actions/upload-artifact@v7
       with:
-        name: maven-central-audit-${{ steps.sanitised.outputs.suffix }}
+        name: maven-central-audit${{ steps.sanitised.outputs.suffix }}
         path: |
           ${{ runner.temp }}/mvn-central-audit/audit-report.json
           ${{ runner.temp }}/mvn-central-audit/maven-modules.txt

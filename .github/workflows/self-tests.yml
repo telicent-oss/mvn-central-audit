@@ -36,8 +36,8 @@ jobs:
 
           - name: Large Release with Disabled Limits passes
             repository: telicent-oss/smart-caches-core
-            max-files: 0
-            max-size: 0
+            max-files: -1
+            max-size: -1
             success: true
 
           - name: Fails on non-Maven repository
@@ -72,7 +72,15 @@ jobs:
         with:
           max-files: ${{ case(matrix.max-files != '', matrix.max-files, 100) }}
           max-size: ${{ case(matrix.max-size != '', matrix.max-size, 10000000) }}
-          artifact-suffix: ${{ matrix.repository }}
+          artifact-suffix: -${{ matrix.repository }}
+
+      - name: Verify Artifact Output
+        uses: actions/download-artifact@v8
+        # Aritfact won't exist if action fails early in the audit process
+        continue-on-error: true
+        with:
+          name: ${{ steps.mvn-central-audit.outputs.artifact-name }}
+          skip-decompress: true
 
       - name: Verify Success
         if: ${{ matrix.success == true }}
