@@ -85,6 +85,36 @@ function bytesToHuman() {
     echo "$b$d ${S[$s]}"
 }
 
+function classify() {
+  local FILE=""
+  local SIZE=""
+  local CLASSIFIER=""
+  local EXT=""
+  while read -r INPUT; do
+    FILE=$(echo "${INPUT}" | awk '{print $1}')
+    SIZE=$(echo "${INPUT}" | awk '{print $2}')
+    EXT=${FILE##*.}
+    if [ "${EXT}" == "asc" ]; then
+      CLASSIFIER="signature"
+      EXT="asc"
+    elif [ "${EXT}" == "pom" ]; then
+      CLASSIFIER="pom"
+      EXT="pom"
+    else
+      CLASSIFIER=${FILE##*-}
+      CLASSIFIER=${CLASSIFIER%%.*}
+      case "${CLASSIFIER}" in 
+        "javadoc" | "sources" | "test-sources" | "tests" | "cyclonedx")
+          ;;
+        *)
+          CLASSIFIER="jar"
+          ;;
+      esac
+    fi
+    echo "${FILE}" "${SIZE}" "${CLASSIFIER}" "${EXT}"
+  done
+}
+
 if [ -z "${OUTPUT_DIR}" ]; then
   OUTPUT_DIR="${TMPDIR:-/tmp/}$(md5hash "$PWD")"
 fi
@@ -243,92 +273,117 @@ TOTAL_FILES=0
 TOTAL_FILE_SIZES=0
 blankLine
 info "Step 8: Auditing Maven Central bundles"
-while IFS= read -r -u3 BUNDLE; do
-  MODULE=$(echo ${BUNDLE} | awk '{print $1}')
-  blankLine
-  info "Auditing Maven Central bundle for Maven Module ${MODULE}..."
-  BUNDLE_DIR=$(echo ${BUNDLE} | awk '{print $2}')
-  if [ ! -d "${BUNDLE_DIR}" ]; then
-    error "Failed to find Bundle directory ${BUNDLE_DIR} for Maven Module ${MODULE}"
-    continue
+if [ ${STEP} -le 8 ]; then
+  if [ ! -f "${OUTPUT_DIR}/published-maven-modules.txt" ]; then
+    abort 8 "No bundle directories file found in output directory, you may need to re-run this script from an earlier step"
   fi
-  rm -f ${OUTPUT_DIR}/${MODULE}-warnings.json >/dev/null 2>&1
 
-  MODULE_FILES=$(ls "${BUNDLE_DIR}" | grep -v maven-metadata | wc -l | tr -d ' ')
-  TOTAL_FILES=$(( ${TOTAL_FILES} + ${MODULE_FILES} ))
-  info "Maven Module ${MODULE} publishes ${MODULE_FILES} release files"
-  ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' > ${OUTPUT_DIR}/${MODULE}-release-files.txt
-
-  MODULE_FILE_SIZES=$(ls -l "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{sum += $5} END {print sum}')
-  TOTAL_FILE_SIZES=$(( ${TOTAL_FILE_SIZES} + ${MODULE_FILE_SIZES} ))
-  info "Maven Module ${MODULE} publishes $(bytesToHuman ${MODULE_FILE_SIZES}) bytes of release files"
-
-  # Warn if module is publishing more than 4MB of release files, this tends to imply fat JARs or some other artifacts
-  # being produced that are large
-  # NB - Maven Central uses 1000 as the kilo-convetion for its usage reporting
-  if [ ${MODULE_FILE_SIZES} -gt 4000000 ]; then
-    warn "Maven Module ${MODULE} produces more than 4MB of release files, top 5 files are as follows:"
-    jsonWarn "${MODULE}" "Produces more than 4MB of release files"
-    ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' | head -n 6
-
-    # Check for obvious causes of fat JARs
-    if xidel -se "//plugin[artifactId='maven-shade-plugin']"; then
-      warn "Maven Module ${MODULE} uses the Shade plugin, far JARs are generally a developer convenience and should not be published to Maven Central unless required by downstream consumers"
-      jsonWarn "${MODULE}" "Uses the Shade plugin to produce fat JARs which most likely should not be published to Maven Central"
+  while IFS= read -r -u3 BUNDLE; do
+    MODULE=$(echo ${BUNDLE} | awk '{print $1}')
+    blankLine
+    info "Auditing Maven Central bundle for Maven Module ${MODULE}..."
+    BUNDLE_DIR=$(echo ${BUNDLE} | awk '{print $2}')
+    if [ ! -d "${BUNDLE_DIR}" ]; then
+      error "Failed to find Bundle directory ${BUNDLE_DIR} for Maven Module ${MODULE}"
+      continue
     fi
-  fi
+    rm -f ${OUTPUT_DIR}/${MODULE}-warnings.json >/dev/null 2>&1
 
-  # Warn if module is publishing tests or test-sources JARs
-  if grep -F "tests.jar" ${OUTPUT_DIR}/${MODULE}-release-files.txt >/dev/null 2>&1; then
-    if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
-      warn "Maven Module ${MODULE} publishes a tests classifier JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar packaging for this module"
-      jsonWarn "${MODULE}" "Publishes a tests classifier JAR that is not used as a dependency within this project.  If not required by downstream consumers consider skipping test-jar packaging for this module"
-    else
-      info "Maven Module ${MODULE} publishes a tests classifier JAR that is an internal project dependency of other modules"
+    MODULE_FILES=$(ls "${BUNDLE_DIR}" | grep -v maven-metadata | wc -l | tr -d ' ')
+    TOTAL_FILES=$(( ${TOTAL_FILES} + ${MODULE_FILES} ))
+    info "Maven Module ${MODULE} publishes ${MODULE_FILES} release files"
+    ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' > ${OUTPUT_DIR}/${MODULE}-release-files.txt
+
+    MODULE_FILE_SIZES=$(ls -l "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{sum += $5} END {print sum}')
+    TOTAL_FILE_SIZES=$(( ${TOTAL_FILE_SIZES} + ${MODULE_FILE_SIZES} ))
+    info "Maven Module ${MODULE} publishes $(bytesToHuman ${MODULE_FILE_SIZES}) bytes of release files"
+
+    # Warn if module is publishing more than 4MB of release files, this tends to imply fat JARs or some other artifacts
+    # being produced that are large
+    # NB - Maven Central uses 1000 as the kilo-convetion for its usage reporting
+    if [ ${MODULE_FILE_SIZES} -gt 4000000 ]; then
+      warn "Maven Module ${MODULE} produces more than 4MB of release files, top 5 files are as follows:"
+      jsonWarn "${MODULE}" "Produces more than 4MB of release files"
+      ls -lhS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' | head -n 6
+
+      # Check for obvious causes of fat JARs
+      if xidel -se "//plugin[artifactId='maven-shade-plugin']"; then
+        warn "Maven Module ${MODULE} uses the Shade plugin, far JARs are generally a developer convenience and should not be published to Maven Central unless required by downstream consumers"
+        jsonWarn "${MODULE}" "Uses the Shade plugin to produce fat JARs which most likely should not be published to Maven Central"
+      fi
     fi
-  fi
-  if grep -F "test-sources.jar" ${OUTPUT_DIR}/${MODULE}-release-files.txt >/dev/null 2>&1; then
-    if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
-      warn "Maven Module ${MODULE} publishes a test-sources JAR for a tests classifer JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar source attachement for this module"
-      jsonWarn "${MODULE}" "Publishes a test-sources JAR for a tests classifier JAR that is not used as a dependency within this project.  If not required by downstream consuemrs consider skipping test-jar source attachment for this module"
+
+    # Warn if module is publishing tests or test-sources JARs
+    if grep -F "tests.jar" ${OUTPUT_DIR}/${MODULE}-release-files.txt >/dev/null 2>&1; then
+      if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
+        warn "Maven Module ${MODULE} publishes a tests classifier JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar packaging for this module"
+        jsonWarn "${MODULE}" "Publishes a tests classifier JAR that is not used as a dependency within this project.  If not required by downstream consumers consider skipping test-jar packaging for this module"
+      else
+        info "Maven Module ${MODULE} publishes a tests classifier JAR that is an internal project dependency of other modules"
+      fi
     fi
-  fi
-
-  # Warn if multiple SBOM formats published
-  SBOM_COUNT=$(ls "${BUNDLE_DIR}" | grep -F "cyclonedx" 2>&1 | grep -v -F ".asc" 2>&1 | wc -l | tr -d ' ')
-  if [ ${SBOM_COUNT} -gt 1 ]; then
-    warn "Maven Module ${MODULE} publishes multiple CycloneDX SBOM formats, SBOMs contain identical data so consider publishing only one format"
-    jsonWarn "${MODULE}" "Publishes multiple CycloneDX SBOM formats, consider publishing only one format"
-    ls "${BUNDLE_DIR}" | grep -F "cyclonedx" | grep -v -F ".asc"
-  fi
-
-  # Warn if no hashes produced if Maven Central plugin configured to none for hashes
-  if [ ${HASHES_PER_FILE} -eq 0 ]; then
-    if ! ls "${BUNDLE_DIR}" | grep -E "(sha1|md5|sha256|sha512)$" >/dev/null 2>&1; then
-      warn "Maven Module ${MODULE} produces no hash files and Maven Central plugin not configured to produce them, this module may fail Maven Central validation as a result"
-      jsonWarn "${MODULE}" "Produces no hash files and Maven Central plugin not configured to produce them, this module may fail Maven Central validation as a result"
+    if grep -F "test-sources.jar" ${OUTPUT_DIR}/${MODULE}-release-files.txt >/dev/null 2>&1; then
+      if ! mvn dependency:tree 2>&1 | grep -F "${MODULE}:jar:tests:" >/dev/null 2>&1; then
+        warn "Maven Module ${MODULE} publishes a test-sources JAR for a tests classifer JAR that is not used as a dependency within this project, if this is not required by downstream consumers consider skipping test-jar source attachement for this module"
+        jsonWarn "${MODULE}" "Publishes a test-sources JAR for a tests classifier JAR that is not used as a dependency within this project.  If not required by downstream consuemrs consider skipping test-jar source attachment for this module"
+      fi
     fi
-  fi
 
-  # Produce the JSON format output for this module which we'll later collate
-  info "Preparing JSON report for module..."
-  ls -lS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' \
-      | sed '/^[[:blank:]]*$/d' \
-      | jq --raw-input --slurp -rc 'splits("\n") | split(" ") | select(. != []) | {file: .[0], size: .[1] }' \
-      | jq --slurp "{ module: \"${MODULE}\", files: [.[]]}" \
-      | jq --slurp 'reduce .[] as $item ({}; . * $item)' > ${OUTPUT_DIR}/${MODULE}-release-files.json
-  if [ -f "${OUTPUT_DIR}/${MODULE}-warnings.json" ]; then
-    info "Merging warnings into JSON report"
-    mv ${OUTPUT_DIR}/${MODULE}-warnings.json ${OUTPUT_DIR}/${MODULE}-warnings.json.temp >/dev/null 2>&1
-    cat ${OUTPUT_DIR}/${MODULE}-warnings.json.temp | jq --slurp '{ warnings: [ .[].warnings[]] }' > ${OUTPUT_DIR}/${MODULE}-warnings.json
-    mv ${OUTPUT_DIR}/${MODULE}-release-files.json ${OUTPUT_DIR}/${MODULE}-release-files.json.temp >/dev/null 2>&1
-    cat ${OUTPUT_DIR}/${MODULE}-release-files.json.temp ${OUTPUT_DIR}/${MODULE}-warnings.json \
-      | jq --slurp 'reduce .[] as $item({}; . * $item)' > ${OUTPUT_DIR}/${MODULE}-release-files.json
-  fi
-  info "Maven Module ${MODULE} audit complete"
+    # Warn if multiple SBOM formats published
+    SBOM_COUNT=$(ls "${BUNDLE_DIR}" | grep -F "cyclonedx" 2>&1 | grep -v -F ".asc" 2>&1 | wc -l | tr -d ' ')
+    if [ ${SBOM_COUNT} -gt 1 ]; then
+      warn "Maven Module ${MODULE} publishes multiple CycloneDX SBOM formats, SBOMs contain identical data so consider publishing only one format"
+      jsonWarn "${MODULE}" "Publishes multiple CycloneDX SBOM formats, consider publishing only one format"
+      ls "${BUNDLE_DIR}" | grep -F "cyclonedx" | grep -v -F ".asc"
+    fi
 
-done 3< ${OUTPUT_DIR}/bundle-directories.txt
+    # Warn if no hashes produced if Maven Central plugin configured to none for hashes
+    if [ ${HASHES_PER_FILE} -eq 0 ]; then
+      if ! ls "${BUNDLE_DIR}" | grep -E "(sha1|md5|sha256|sha512)$" >/dev/null 2>&1; then
+        warn "Maven Module ${MODULE} produces no hash files and Maven Central plugin not configured to produce them, this module may fail Maven Central validation as a result"
+        jsonWarn "${MODULE}" "Produces no hash files and Maven Central plugin not configured to produce them, this module may fail Maven Central validation as a result"
+      fi
+    fi
+
+    # Produce the JSON format output for this module which we'll later collate
+    info "Preparing JSON report for module..."
+    ls -lS "${BUNDLE_DIR}" | grep -v maven-metadata | awk '{print $9 " " $5}' \
+        | sed '/^[[:blank:]]*$/d' \
+        | classify > "${OUTPUT_DIR}/classified.txt"
+    cat "${OUTPUT_DIR}/classified.txt" \
+        | jq --raw-input --slurp -rc 'splits("\n") | split(" ") | select(. != []) | {file: .[0], size: .[1], classifier: .[2], type: .[3] }' \
+        | jq --slurp "{ module: \"${MODULE}\", files: [.[]]}" \
+        | jq --slurp 'reduce .[] as $item ({}; . * $item)' > ${OUTPUT_DIR}/${MODULE}-release-files.json
+    if [ -f "${OUTPUT_DIR}/${MODULE}-warnings.json" ]; then
+      info "Merging warnings into JSON report"
+      mv ${OUTPUT_DIR}/${MODULE}-warnings.json ${OUTPUT_DIR}/${MODULE}-warnings.json.temp >/dev/null 2>&1
+      cat ${OUTPUT_DIR}/${MODULE}-warnings.json.temp | jq --slurp '{ warnings: [ .[].warnings[]] }' > ${OUTPUT_DIR}/${MODULE}-warnings.json
+      mv ${OUTPUT_DIR}/${MODULE}-release-files.json ${OUTPUT_DIR}/${MODULE}-release-files.json.temp >/dev/null 2>&1
+      cat ${OUTPUT_DIR}/${MODULE}-release-files.json.temp ${OUTPUT_DIR}/${MODULE}-warnings.json \
+        | jq --slurp 'reduce .[] as $item({}; . * $item)' > ${OUTPUT_DIR}/${MODULE}-release-files.json
+    fi
+    info "Maven Module ${MODULE} audit complete"
+
+  done 3< ${OUTPUT_DIR}/bundle-directories.txt
+
+  echo "${TOTAL_FILES}" > ${OUTPUT_DIR}/total-release-files
+  echo "${TOTAL_FILE_SIZES}" > ${OUTPUT_DIR}/total-file-sizes
+else
+  if [ -f "${OUTPUT_DIR}/total-release-files" ]; then
+    TOTAL_FILES=$(cat "${OUTPUT_DIR}/total-release-files")
+  fi
+  if [ -f "${OUTPUT_DIR}/total-file-sizes" ]; then
+    TOTAL_FILE_SIZES=$(cat "${OUTPUT_DIR}/total-file-sizes")
+  fi
+  info "Skipped at user request"
+fi
+if [ "${TOTAL_FILES}" -eq 0 ] || [ "${TOTAL_FILE_SIZES}" -eq 0 ] || [ -z "${TOTAL_FILES}" ] || [ -z "${TOTAL_FILE_SIZES}" ]; then
+  abort 8 "Failed to obtain total release files count and sizes, you may need to re-run this script from an earlier step"
+fi
+
+# Step 9 - Final Audit Report
 blankLine
+info "Step 9 - Produce Audit Report"
 info "Maven Project publishes ${TOTAL_FILES} release files"
 info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
 # Bundles don't contain generated hashes so need to account for those
@@ -359,6 +414,12 @@ info "Total Release Size (including Hashes): $(bytesToHuman $(( ${TOTAL_FILE_SIZ
 # Produce the JSON format reports from the accumulated module reports
 blankLine
 cat ${OUTPUT_DIR}/*-release-files.json | jq --slurp -c '.[] | { modules: [.]}' \
-  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} ))\", warnings: \"${WARNINGS}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}/audit-report.json
-info "JSON Audit Report available as ${OUTPUT_DIR}/audit-report.json"
+  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} ))\", warnings: \"${WARNINGS}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}/audit-report.temp
 
+
+# Compute per classifier sizes
+cat ${OUTPUT_DIR}/audit-report.json \
+  | jq '[.modules[].files[]] | group_by(.classifier) | map([first.classifier, (map(.size | tonumber) | add), length]) | { classifiers: [(.[] | { classifier: .[0], size: .[1], files: .[2]}) ] } | .classifiers | sort_by(.size) | reverse | { classifiers: .}' > "${OUTPUT_DIR}/classifiers.json"
+cat ${OUTPUT_DIR}/audit-report.temp ${OUTPUT_DIR}/classifiers.json | jq --slurp 'add' > ${OUTPUT_DIR}/audit-report.json
+
+info "JSON Audit Report available as ${OUTPUT_DIR}/audit-report.json"

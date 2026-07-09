@@ -23,21 +23,30 @@ jobs:
           - name: Small Release passes
             repository: telicent-oss/jena-fuseki-kafka
             success: true
+            max-warnings: -1
+
+          - name: Small Release with Warnings Limit fails
+            repository: telicent-oss/jena-fuseki-kafka
+            success: false
+            max-warnings: 0
             
           - name: Large Release with Default Limits fails
             repository: telicent-oss/smart-caches-core
             success: false
+            max-warnings: -1
 
           - name: Large Release with Increased Limits passes
             repository: telicent-oss/smart-caches-core
             max-files: 500
             max-size: 15000000 # 15MB
+            max-warnings: -1
             success: true
 
           - name: Large Release with Disabled Limits passes
             repository: telicent-oss/smart-caches-core
             max-files: -1
             max-size: -1
+            max-warnings: -1
             success: true
 
           - name: Fails on non-Maven repository
@@ -72,6 +81,7 @@ jobs:
         with:
           max-files: ${{ case(matrix.max-files != '', matrix.max-files, 100) }}
           max-size: ${{ case(matrix.max-size != '', matrix.max-size, 10000000) }}
+          max-warnings: ${{ matrix.max-warnings }}
           artifact-suffix: -${{ matrix.repository }}
 
       - name: Verify Artifact Output

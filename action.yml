@@ -30,6 +30,17 @@ inputs:
       monthly free usage limit of 80MB.
 
       If a zero/negative value is supplied then this limit is not enforced.
+  max-warnings:
+    required: false
+    default: "-1"
+    description: |
+      Specifies the limit on the number of warnings, if a release exceeds this number of warnings then the action will 
+      fail.
+      
+      If a negative value is supplied then this limit is not enforced.  Note that this differs from other limit inputs 
+      in that this may be set to 0 to enforce that no warnings are permitted.
+
+      Defaults to -1 meaning no limit is enforced by default.
   artifact-suffix:
     required: false
     default: ""
@@ -120,6 +131,7 @@ runs:
       run: |
         TOTAL_FILES=$(cat ${{ runner.temp }}/mvn-central-audit/audit-report.json | jq -r .totalFiles)
         TOTAL_SIZE=$(cat ${{ runner.temp }}/mvn-central-audit/audit-report.json | jq -r .totalSize)
+        TOTAL_WARNINGS=$(cat ${{ runner.temp }}/mvn-central-audit/audit-report.json | jq -r .warnings)
 
         ERRORS=0
         if [ "${{ inputs.max-files }}" -gt 0 ] && [ ${TOTAL_FILES} -gt "${{ inputs.max-files }}" ]; then
@@ -128,6 +140,10 @@ runs:
         fi
         if [ "${{ inputs.max-size }}" -gt 0 ] && [ ${TOTAL_SIZE} -gt "${{ inputs.max-size }}" ]; then
           echo "::error::Maven Central audit indicates ${TOTAL_SIZE} bytes would be released and action is configured with limit ${{ inputs.max-size }}"
+          ERRORS=$(( ${ERRORS} + 1))
+        fi
+        if [ "${{ inputs.max-warnings }}" -ge 0 ] && [ ${TOTAL_WARNINGS} -gt "${{ inputs.max-warnings }}" ]; then
+          echo "::error::Maven Central audit indicates ${TOTAL_WARNINGS} warnings and action is configured with limit ${{ inputs.max-warnings }}"
           ERRORS=$(( ${ERRORS} + 1))
         fi
 

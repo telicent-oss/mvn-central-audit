@@ -74,6 +74,7 @@ The action supports the following inputs:
 |-------------------|------------|-----------|-----------------------------------------------------------|
 | `max-files`       | `false`    | `100`     | Specifies the maximum permitted number of release files   |
 | `max-size`        | `false`    | `8000000` | Specifies the maximum size in bytes of the release files  |
+| `max-warnings`    | `false`    | `-1`      | Specifies the maximum number of published module warnings |
 | `artifact-suffix` | `false`    |           | Specifies a suffix for the uploaded audit report artifact |
 
 #### Limits
@@ -87,6 +88,10 @@ The defaults for these limits are set at 10% of the current proposed monthly usa
 Setting either limit to `0` or a negative value will disable that limit being enforced.  We would recommend running the
 audit [directly](#run-directly) against your Maven projects before adopting usage of this action.  That way you can
 address any obvious issues up front and configure appropriate limits for your project.
+
+The `max-warnings` input specifies the limit on the number of warnings, as reported by the top level `warnings` property
+in the audit report.  Unlike the other limits this may be set to `0` to indicate you permit no warnings, a negative
+value disables this limit.
 
 #### Artifact Suffix
 
@@ -103,7 +108,7 @@ against many Maven project directories safely in parallel.
 
 ## Steps
 
-The 8 steps are as follows:
+The steps are as follows:
 
 1. Validates that you are in a Maven project directory i.e. there is a `pom.xml` file present
 2. Validates that the `pom.xml` file is configured to use the Maven Central publishing plugin
@@ -117,6 +122,7 @@ The 8 steps are as follows:
    accidentally create a deployment on Maven Central
 7. Determines the prepared bundle directories for each published module
 8. Audits each published module
+9. Produce the final audit report
 
 Note that each step produces outputs to the aforementioned temporary directory as appropriate, therefore the script
 allows you to skip checks if you make changes based on the audit report that don't require you to re-run the entire
@@ -261,8 +267,18 @@ It then goes into detailed per-module reports, each item in the `modules` array 
   file:
     - `file` - Indicates the name of a release file
     - `size` - Indicates the size in bytes of the release file
+    - `classifier` - Indicates the Maven classifier of a release file, this will be `signature` for the signature files
+    - `type` - Indicates the file extension for the release file
 - `warnings` - An optional field, if present it is an array of warning messages indicating any potential issues with the
   module that you may wish to address
+
+Finally it provides a `classifiers` array that summarises the artifacts by their Maven classifier, this array is sorted
+from the classifier that produces the most bytes of release files to the fewest.  Each item in the `classifiers` array
+contains the following:
+
+- `classifier` - The Maven classifier
+- `size` - The total size in bytes of release files with this classifier
+- `files` - The number of files with this classifier
 
 Here's an example audit report:
 
@@ -274,58 +290,82 @@ Here's an example audit report:
   "hashFilesSize": "1872",
   "totalFiles": "52",
   "totalSize": "1234317",
-  "warnings": 1,
+  "warnings": "1",
   "modules": [
     {
       "module": "jena-fuseki-kafka-module",
       "files": [
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-cyclonedx.json",
-          "size": "284106"
+          "size": "284106",
+          "classifier": "cyclonedx",
+          "type": "json"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-javadoc.jar",
-          "size": "124285"
+          "size": "124285",
+          "classifier": "javadoc",
+          "type": "jar"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-tests.jar",
-          "size": "45270"
+          "size": "45270",
+          "classifier": "tests",
+          "type": "jar"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT.jar",
-          "size": "23946"
+          "size": "23946",
+          "classifier": "jar",
+          "type": "jar"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-sources.jar",
-          "size": "18530"
+          "size": "18530",
+          "classifier": "sources",
+          "type": "jar"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT.pom",
-          "size": "9212"
+          "size": "9212",
+          "classifier": "pom",
+          "type": "pom"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-cyclonedx.json.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-javadoc.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-sources.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-tests.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT.pom.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         }
       ],
       "warnings": [
@@ -337,43 +377,63 @@ Here's an example audit report:
       "files": [
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-javadoc.jar",
-          "size": "169395"
+          "size": "169395",
+          "classifier": "javadoc",
+          "type": "jar"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-cyclonedx.json",
-          "size": "129641"
+          "size": "129641",
+          "classifier": "cyclonedx",
+          "type": "json"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT.jar",
-          "size": "45509"
+          "size": "45509",
+          "classifier": "jar",
+          "type": "jar"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-sources.jar",
-          "size": "38745"
+          "size": "38745",
+          "classifier": "sources",
+          "type": "jar"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT.pom",
-          "size": "9483"
+          "size": "9483",
+          "classifier": "pom",
+          "type": "pom"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-cyclonedx.json.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-javadoc.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-sources.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT.jar.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT.pom.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         }
       ]
     },
@@ -382,21 +442,66 @@ Here's an example audit report:
       "files": [
         {
           "file": "jena-kafka-3.0.5-SNAPSHOT-cyclonedx.json",
-          "size": "292859"
+          "size": "292859",
+          "classifier": "cyclonedx",
+          "type": "json"
         },
         {
           "file": "jena-kafka-3.0.5-SNAPSHOT.pom",
-          "size": "30635"
+          "size": "30635",
+          "classifier": "pom",
+          "type": "pom"
         },
         {
           "file": "jena-kafka-3.0.5-SNAPSHOT-cyclonedx.json.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         },
         {
           "file": "jena-kafka-3.0.5-SNAPSHOT.pom.asc",
-          "size": "833"
+          "size": "833",
+          "classifier": "signature",
+          "type": "asc"
         }
       ]
+    }
+  ],
+  "classifiers": [
+    {
+      "classifier": "cyclonedx",
+      "size": 706606,
+      "files": 3
+    },
+    {
+      "classifier": "javadoc",
+      "size": 293680,
+      "files": 2
+    },
+    {
+      "classifier": "jar",
+      "size": 69455,
+      "files": 2
+    },
+    {
+      "classifier": "sources",
+      "size": 57275,
+      "files": 2
+    },
+    {
+      "classifier": "pom",
+      "size": 49330,
+      "files": 3
+    },
+    {
+      "classifier": "tests",
+      "size": 45270,
+      "files": 1
+    },
+    {
+      "classifier": "signature",
+      "size": 10829,
+      "files": 13
     }
   ]
 }
