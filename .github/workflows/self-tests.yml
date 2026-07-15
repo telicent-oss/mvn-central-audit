@@ -49,6 +49,11 @@ jobs:
             max-warnings: -1
             success: true
 
+          - name: Release that requires custom Maven arguments
+            repository: rvesse/airline
+            success: true
+            extraMavenArgs: -Prelease
+
           - name: Fails on non-Maven repository
             repository: ${{ github.repository }}
             success: false
@@ -78,6 +83,8 @@ jobs:
         id: mvn-central-audit
         uses: Telicent-io/mvn-central-audit@v1
         continue-on-error: true
+        env:
+          MAVEN_ARGS: ${{ matrix.extraMavenArgs }}
         with:
           max-files: ${{ case(matrix.max-files != '', matrix.max-files, 100) }}
           max-size: ${{ case(matrix.max-size != '', matrix.max-size, 10000000) }}

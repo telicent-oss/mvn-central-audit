@@ -123,6 +123,9 @@ if ! mkdir -p ${OUTPUT_DIR}/; then
   abort 1 "Failed to create temporary output directory ${OUTPUT_DIR}"
 fi
 info "Maven Project Directory is ${PWD}"
+if [ -n "${MAVEN_ARGS}" ]; then
+  info "Additional Maven Arguments are ${MAVEN_ARGS}"
+fi
 info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
 
 # Firstly verify that this is a Maven project directory
@@ -154,7 +157,7 @@ blankLine
 info "Step 3: Quick Building the Maven Project"
 if [ ${STEP} -le 3 ]; then
     info "Quick building the Maven Project (skipping tests, GPG signing, CycloneDX SBOMs, Javadoc, Source and Delombok)"
-    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip > "${OUTPUT_DIR}/quick-build.log" 2>&1 ; then
+    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip ${MAVEN_ARGS} > "${OUTPUT_DIR}/quick-build.log" 2>&1 ; then
       abort 3 "Failed to quick build the Maven project"
     fi
     info "Maven project quick builds OK"
@@ -238,7 +241,7 @@ blankLine
 info "Step 6: Maven Deploy Dry Run"
 if [ ${STEP} -le 6 ]; then
     info "Dry running mvn deploy (with tests skipped) to audit publishing bundle files..."
-    mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
+    mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost ${MAVEN_ARGS} >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
     info "Dry ran mvn deploy"
 else
     info "Skipped at user request"
@@ -418,7 +421,7 @@ cat ${OUTPUT_DIR}/*-release-files.json | jq --slurp -c '.[] | { modules: [.]}' \
 
 
 # Compute per classifier sizes
-cat ${OUTPUT_DIR}/audit-report.json \
+cat ${OUTPUT_DIR}/audit-report.temp \
   | jq '[.modules[].files[]] | group_by(.classifier) | map([first.classifier, (map(.size | tonumber) | add), length]) | { classifiers: [(.[] | { classifier: .[0], size: .[1], files: .[2]}) ] } | .classifiers | sort_by(.size) | reverse | { classifiers: .}' > "${OUTPUT_DIR}/classifiers.json"
 cat ${OUTPUT_DIR}/audit-report.temp ${OUTPUT_DIR}/classifiers.json | jq --slurp 'add' > ${OUTPUT_DIR}/audit-report.json
 

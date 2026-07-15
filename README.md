@@ -43,6 +43,8 @@ audit.sh 4
 
 - `TMPDIR` - If set this is used as the base of the [Output Directory](#outputs)
 - `OUTPUT_DIR` - If set this is used as the output directory ignoring `TMPDIR`
+- `MAVEN_ARGS` - If set adds additional arguments to the `mvn` commands run in [Steps](#steps) 3 and 6, this may be
+  useful if your build/release requires specific profile(s) to be activated or Maven properties to be customised
 
 > You **MUST NOT** set `OUTPUT_DIR` to a directory within the Maven project directory you are trying to audit, otherwise
 > some of the `mvn` commands run may wipe this directory unexpectedly and cause script failures.
