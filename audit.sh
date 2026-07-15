@@ -355,7 +355,7 @@ if [ ${STEP} -le 8 ]; then
         | classify > "${OUTPUT_DIR}/classified.txt"
     cat "${OUTPUT_DIR}/classified.txt" \
         | jq --raw-input --slurp -rc 'splits("\n") | split(" ") | select(. != []) | {file: .[0], size: .[1], classifier: .[2], type: .[3] }' \
-        | jq --slurp "{ module: \"${MODULE}\", files: [.[]]}" \
+        | jq --slurp "{ module: \"${MODULE}\", size: (map(.size | tonumber) | add), count: (.[] | length), files: [.[]]}" \
         | jq --slurp 'reduce .[] as $item ({}; . * $item)' > ${OUTPUT_DIR}/${MODULE}-release-files.json
     if [ -f "${OUTPUT_DIR}/${MODULE}-warnings.json" ]; then
       info "Merging warnings into JSON report"

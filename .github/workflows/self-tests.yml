@@ -51,6 +51,7 @@ jobs:
 
           - name: Release that requires custom Maven arguments
             repository: rvesse/airline
+            max-files: 500
             success: true
             extraMavenArgs: -Prelease
 

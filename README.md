@@ -265,6 +265,8 @@ The report starts with summary information:
 It then goes into detailed per-module reports, each item in the `modules` array contains the following:
 
 - `module` - The name of the module
+- `size` - The total size of release files for the module (excluding hash files)
+- `count` - The count of release files for the module (excluding hash files)
 - `files` - An array of objects each representing a single release file, the array is sorted from largest to smallest
   file:
     - `file` - Indicates the name of a release file
@@ -296,6 +298,8 @@ Here's an example audit report:
   "modules": [
     {
       "module": "jena-fuseki-kafka-module",
+      "size": 510347,
+      "count": 4,
       "files": [
         {
           "file": "jena-fuseki-kafka-module-3.0.5-SNAPSHOT-cyclonedx.json",
@@ -376,6 +380,8 @@ Here's an example audit report:
     },
     {
       "module": "jena-kafka-connector",
+      "size": 396938,
+      "count": 4,
       "files": [
         {
           "file": "jena-kafka-connector-3.0.5-SNAPSHOT-javadoc.jar",
@@ -441,6 +447,8 @@ Here's an example audit report:
     },
     {
       "module": "jena-kafka",
+      "size": 325160,
+      "count": 4,
       "files": [
         {
           "file": "jena-kafka-3.0.5-SNAPSHOT-cyclonedx.json",
