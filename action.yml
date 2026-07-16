@@ -65,7 +65,7 @@ outputs:
   artifact-name:
     description: |
       The name of the uploaded GitHub Actions artifact containing the audit report and related files.
-    value: maven-central-audit${{ steps.sanitised.outputs.suffix }}
+    value: ${{ case(steps.upload-audit-report.outcome == 'skipped', format('{0}{1}', 'maven-central-audit', steps.sanitised.outputs.suffix), '') }}
   artifact-id:
     description: |
       The ID of the uploaded GitHub Actions artifact containing the audit report and related files.
@@ -133,7 +133,7 @@ runs:
 
     - name: Upload Audit Report
       id: upload-audit-report
-      if: ${{ always() && inputs.upload-report == 'true' }}
+      if: ${{ always() && inputs.upload-report }}
       uses: actions/upload-artifact@v7
       with:
         name: maven-central-audit${{ steps.sanitised.outputs.suffix }}
