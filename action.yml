@@ -63,8 +63,15 @@ inputs:
       names.
 outputs:
   artifact-name:
-    description: The name of the uploaded GitHub Actions artifact containing the audit report and related files.
+    description: |
+      The name of the uploaded GitHub Actions artifact containing the audit report and related files.
     value: maven-central-audit${{ steps.sanitised.outputs.suffix }}
+  artifact-id:
+    description: |
+      The ID of the uploaded GitHub Actions artifact containing the audit report and related files.
+
+      If the `upload-report` input was set to disable artifact upload then this will be empty.
+    value: ${{ steps.upload-audit-report.outputs.artifact-id }}
 runs:
   using: composite
   steps:

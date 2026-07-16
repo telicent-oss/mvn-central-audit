@@ -116,11 +116,11 @@ artifacts would conflict.
 
 ### Action Outputs
 
-The action has a single output - `artifact-name` - indicating the name of the uploaded [audit report
-artifact](#artifact-suffix).
+The action has two outputs - `artifact-name` and `artifact-id` - indicating the name and ID of the uploaded [audit
+report artifact](#artifact-suffix).
 
-> **NB** Even if the `upload-report` input was set to a value that disabled upload then this output will still be
-> populated with the artifact name that would have been used however this artifact will be unavailable.
+> **NB** When the `upload-report` input is set to a value that disables report upload then the `artifact-name` will
+> still be populated with the name that would have been used.  However the `artifact-id` output will be empty.
 
 # What it does
 

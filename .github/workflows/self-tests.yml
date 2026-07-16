@@ -157,9 +157,13 @@ jobs:
         if: ${{ matrix.upload-report == 'false' }}
         shell: bash
         run: |
+          if [ -n "${{ steps.mvn-central-audit.outputs.artifact-id }}" ]; then
+            echo "::error::Artifact ID output should not be set if configured to not upload it"
+            exit 1
+          fi
           if [ "${{ steps.verify-artifact.outcome }}" != "failure" ]; then
             echo "::error::Artifact was uploaded despite action being configured to not upload it"
-            exit 1
+            exit 2
           fi
 
       - name: Verify Success
