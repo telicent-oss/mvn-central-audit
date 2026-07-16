@@ -154,7 +154,7 @@ jobs:
           skip-decompress: true
 
       - name: Verify No Artifact if Upload disabled
-        if: ${{ matrix.upload-report == 'false' }}
+        if: ${{ ! matrix.upload-report }}
         shell: bash
         run: |
           if [ -n "${{ steps.mvn-central-audit.outputs.artifact-id }}" ]; then
