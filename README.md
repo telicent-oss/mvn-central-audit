@@ -66,7 +66,10 @@ This repository also contains a composite GitHub Action that may be run, the act
 
 This will install the necessary supporting tools and obtain the `audit.sh` script before running the audit.  The audit
 may fail if the script fails (see [Exit Codes](#exit-codes)), or if the produced audit report indicates that the number
-of release files/total release size exceeds the default [limits](#action-inputs)
+of release files/total release size, or warnings exceeds the default [limits](#action-inputs).
+
+The action configures the audit script to output to a temporary directory under the
+[`runner.temp`](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#runner-context) directory.
 
 ### Action Inputs
 
@@ -74,10 +77,19 @@ The action supports the following inputs:
 
 | Input             | Required?  | Default   | Purpose                                                   |
 |-------------------|------------|-----------|-----------------------------------------------------------|
+| `maven-args`      | `false`    | ``        | Specifies additional Maven arguments for build & deploy   |
 | `max-files`       | `false`    | `100`     | Specifies the maximum permitted number of release files   |
 | `max-size`        | `false`    | `8000000` | Specifies the maximum size in bytes of the release files  |
 | `max-warnings`    | `false`    | `-1`      | Specifies the maximum number of published module warnings |
+| `upload-report`   | `false`    | `true`    | Specifies whether the audit report aritfact is uploaded   |
 | `artifact-suffix` | `false`    |           | Specifies a suffix for the uploaded audit report artifact |
+
+#### Maven Arguments
+
+As noted earlier under [Environment Variables](#environment-variables) in some cases a Maven project may require
+additional arguments to the build and deploy [steps](#steps) in order for the Maven Central plugin to be used and/or the
+audit to accurately reflect your release.  The `maven-args` input allows you to specify any additional Maven arguments
+needed for those steps, e.g. `-Prelease` to activate your `release` profile.
 
 #### Limits
 
@@ -97,13 +109,22 @@ value disables this limit.
 
 #### Artifact Suffix
 
-The action will upload an artifact named `maven-central-audit` for your build, you can optionally add a suffix to this
-name by specifying the `artifact-suffix` input.  This may be useful if you have a job matrix that results in calling
-this action multiple times as otherwise the artifacts would conflict.
+The action will upload an artifact named `maven-central-audit` for your build **UNLESS** the `upload-report` input was
+set to a value other than `true`.  You can optionally add a suffix to this name by specifying the `artifact-suffix`
+input.  This may be useful if you have a job matrix that results in calling this action multiple times as otherwise the
+artifacts would conflict.
+
+### Action Outputs
+
+The action has a single output - `artifact-name` - indicating the name of the uploaded [audit report
+artifact](#artifact-suffix).
+
+> **NB** Even if the `upload-report` input was set to a value that disabled upload then this output will still be
+> populated with the artifact name that would have been used however this artifact will be unavailable.
 
 # What it does
 
-The script runs an 8 step audit process, the outputs of each step are written to a temporary directory under
+The script runs a multi-step audit process, the outputs of each step are written to a temporary directory under
 `/tmp/<hash>` where `<hash>` is the `md5` hash of the directory you are running the script against i.e. each unique
 Maven project directory you run this script against has unique isolated outputs.  This means the script can be run
 against many Maven project directories safely in parallel.

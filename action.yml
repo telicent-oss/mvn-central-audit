@@ -9,6 +9,12 @@ branding:
   icon: "git-pull-request"
   color: "purple"
 inputs:
+  maven-args:
+    required: false
+    default: ''
+    description: |
+      Specifies any extra Maven arguments required to build/deploy your Maven project, for example if the Maven Central
+      plugin is only activated by a specific profile you might need `-Prelease` or similar.
   max-files:
     required: false
     default: "100"
@@ -41,6 +47,11 @@ inputs:
       in that this may be set to 0 to enforce that no warnings are permitted.
 
       Defaults to -1 meaning no limit is enforced by default.
+  upload-report:
+    required: false
+    default: "true"
+    description: |
+      When set to true will upload the audit report and related logs as a GitHub Actions artifact.
   artifact-suffix:
     required: false
     default: ""
@@ -90,6 +101,7 @@ runs:
       shell: bash
       env:
         OUTPUT_DIR: ${{ runner.temp }}/mvn-central-audit/
+        MAVEN_ARGS: ${{ inputs.maven-args }}
       run: |
         ${{ runner.temp }}/mvn-central-audit/audit.sh
 
@@ -114,7 +126,7 @@ runs:
 
     - name: Upload Audit Report
       id: upload-audit-report
-      if: ${{ always() }}
+      if: ${{ always() && inputs.upload-report == 'true' }}
       uses: actions/upload-artifact@v7
       with:
         name: maven-central-audit${{ steps.sanitised.outputs.suffix }}
