@@ -142,7 +142,7 @@ jobs:
           max-files: ${{ case(matrix.max-files != '', matrix.max-files, 100) }}
           max-size: ${{ case(matrix.max-size != '', matrix.max-size, 10000000) }}
           max-warnings: ${{ matrix.max-warnings }}
-          artifact-suffix: -${{ matrix.repository }}
+          artifact-suffix: -${{ matrix.repository }}-${{ matrix.name }}
           upload-report: ${{ matrix.upload-report }}
 
       - name: Verify Artifact Uploaded
