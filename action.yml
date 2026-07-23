@@ -108,7 +108,7 @@ runs:
       shell: bash
       env:
         OUTPUT_DIR: ${{ runner.temp }}/mvn-central-audit/
-        MAVEN_ARGS: ${{ inputs.maven-args }}
+        MAVEN_EXTRA_ARGS: ${{ inputs.maven-args }}
       run: |
         ${{ runner.temp }}/mvn-central-audit/audit.sh
 
