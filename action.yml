@@ -71,7 +71,7 @@ outputs:
       The ID of the uploaded GitHub Actions artifact containing the audit report and related files.
 
       If the `upload-report` input was set to disable artifact upload then this will be empty.
-    value: ${{ steps.upload-audit-report.outputs.artifact-id }}
+    value: ${{ case(steps.upload-audit-report.outcome == 'skipped', steps.upload-audit-report.outputs.artifact-id, '') }}
 runs:
   using: composite
   steps:
@@ -133,7 +133,7 @@ runs:
 
     - name: Upload Audit Report
       id: upload-audit-report
-      if: ${{ always() && inputs.upload-report }}
+      if: ${{ always() && inputs.upload-report == 'true' }}
       uses: actions/upload-artifact@v7
       with:
         name: maven-central-audit${{ steps.sanitised.outputs.suffix }}

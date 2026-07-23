@@ -41,6 +41,19 @@ function abort() {
     exit ${RET}
 }
 
+function step() {
+  if [ -n "${GITHUB_REF}" ]; then
+    echo "::group::" $*
+  fi
+  info $*
+}
+
+function endStep() {
+  if [ -n "${GITHUB_REF}" ]; then
+    echo "::endgroup::"
+  fi
+}
+
 function requireCommands() {
   local COMMAND=""
   for COMMAND in $*; do
@@ -130,7 +143,7 @@ info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
 
 # Firstly verify that this is a Maven project directory
 blankLine
-info "Step 1: Validate Maven Project Directory"
+step "Step 1: Validate Maven Project Directory"
 if [ ${STEP} -le 1 ]; then
     if [ ! -f "pom.xml" ]; then
     abort 1 "No pom.xml found in the current directory"
@@ -139,10 +152,11 @@ if [ ${STEP} -le 1 ]; then
 else
     info "Skipped at user request"
 fi
+endStep
 
 # Secondly verify that the Maven project uses Maven Central publishing plugin
 blankLine
-info "Step 2: Validate Maven Central Publishing Plugin used"
+step "Step 2: Validate Maven Central Publishing Plugin used"
 if [ ${STEP} -le 2 ]; then
     if ! mvn help:effective-pom | grep central-publishing-maven-plugin >/dev/null 2>&1; then
       abort 2 "pom.xml does not appear to use Maven Central publishing plugin"
@@ -151,10 +165,11 @@ if [ ${STEP} -le 2 ]; then
 else
     info "Skipped at user request"
 fi
+endStep
 
 # Determine the list of modules
 blankLine
-info "Step 3: Quick Building the Maven Project"
+step "Step 3: Quick Building the Maven Project"
 if [ ${STEP} -le 3 ]; then
     info "Quick building the Maven Project (skipping tests, GPG signing, CycloneDX SBOMs, Javadoc, Source and Delombok)"
     if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip ${MAVEN_ARGS} > "${OUTPUT_DIR}/quick-build.log" 2>&1 ; then
@@ -164,8 +179,10 @@ if [ ${STEP} -le 3 ]; then
 else
     info "Skipped at user request"
 fi
+endStep
+
 blankLine
-info "Step 4: Determining Maven Modules"
+step "Step 4: Determining Maven Modules"
 if [ ${STEP} -le 4 ]; then
     info "Detecting Maven Modules..."
     if ! mvn exec:exec -Dexec.executable=echo -Dexec.args='${project.artifactId}' -q > ${OUTPUT_DIR}/maven-modules.txt; then
@@ -179,10 +196,11 @@ if [ ! -f "${OUTPUT_DIR}/maven-modules.txt" ]; then
 fi
 TOTAL_MODULES=$(wc -l ${OUTPUT_DIR}/maven-modules.txt | awk '{print $1}' | tr -d ' ')
 info "Found ${TOTAL_MODULES} Maven modules in this project"
+endStep
 
 # For each module determine whether or not it is published
 blankLine
-info "Step 5: Determining which Maven Modules are Published"
+step "Step 5: Determining which Maven Modules are Published"
 HASHES_PER_FILE=0
 if [ ${STEP} -le 5 ]; then
   rm -f ${OUTPUT_DIR}/published-maven-modules.txt >/dev/null 2>&1
@@ -232,13 +250,14 @@ if [ ${PUBLISHED_MODULES} -eq 0 ]; then
   abort 5 "No modules are published to Maven Central"
 fi
 info "Maven Project will generate ${HASHES_PER_FILE} hash files per release file"
+endStep
 
 # Next we want to dry run deployment to see what bundles would be generated
 # NB - Central Publishing Plugin doesn't have a dry-run option, best we can do is autoPublish=false and set a dud
 #      centralBaseUrl so it doesn't actually upload to real Maven Central
 # This also means we don't bother checking for the mvn command to fail here because we intend it to fail
 blankLine
-info "Step 6: Maven Deploy Dry Run"
+step "Step 6: Maven Deploy Dry Run"
 if [ ${STEP} -le 6 ]; then
     info "Dry running mvn deploy (with tests skipped) to audit publishing bundle files..."
     mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost ${MAVEN_ARGS} >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
@@ -246,10 +265,11 @@ if [ ${STEP} -le 6 ]; then
 else
     info "Skipped at user request"
 fi
+endStep
 
 # Determine bundle directories
 blankLine
-info "Step 7: Determining Bundle directories"
+step "Step 7: Determining Bundle directories"
 if [ ${STEP} -le 7 ]; then
   rm -f ${OUTPUT_DIR}/bundle-directories.txt >/dev/null 2>&1
   while IFS= read -r -u3 MODULE; do
@@ -270,12 +290,13 @@ if [ ${STEP} -le 7 ]; then
 else
     info "Skipped at user request"
 fi
+endStep
 
 # For each module inspect the bundle
 TOTAL_FILES=0
 TOTAL_FILE_SIZES=0
 blankLine
-info "Step 8: Auditing Maven Central bundles"
+step "Step 8: Auditing Maven Central bundles"
 if [ ${STEP} -le 8 ]; then
   if [ ! -f "${OUTPUT_DIR}/published-maven-modules.txt" ]; then
     abort 8 "No bundle directories file found in output directory, you may need to re-run this script from an earlier step"
@@ -383,10 +404,11 @@ fi
 if [ "${TOTAL_FILES}" -eq 0 ] || [ "${TOTAL_FILE_SIZES}" -eq 0 ] || [ -z "${TOTAL_FILES}" ] || [ -z "${TOTAL_FILE_SIZES}" ]; then
   abort 8 "Failed to obtain total release files count and sizes, you may need to re-run this script from an earlier step"
 fi
+endStep
 
 # Step 9 - Final Audit Report
 blankLine
-info "Step 9 - Produce Audit Report"
+step "Step 9 - Produce Audit Report"
 info "Maven Project publishes ${TOTAL_FILES} release files"
 info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
 # Bundles don't contain generated hashes so need to account for those
@@ -426,3 +448,4 @@ cat ${OUTPUT_DIR}/audit-report.temp \
 cat ${OUTPUT_DIR}/audit-report.temp ${OUTPUT_DIR}/classifiers.json | jq --slurp 'add' > ${OUTPUT_DIR}/audit-report.json
 
 info "JSON Audit Report available as ${OUTPUT_DIR}/audit-report.json"
+endStep
