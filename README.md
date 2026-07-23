@@ -18,7 +18,7 @@ The following tools are required to be present on your `PATH`:
   help determine some release/plugin configurations
 - `jq` - this is used to help prepare the JSON [audit report](#outputs)
 
-Additionally the script requires on various standard POSIX commands and/or Bash built-ins.  The script will exit
+Additionally the script relies on various standard POSIX commands and/or Bash built-ins.  The script will exit
 immediately if any of the required commands are not found.
 
 # Run Directly
@@ -43,8 +43,8 @@ audit.sh 4
 
 - `TMPDIR` - If set this is used as the base of the [Output Directory](#outputs)
 - `OUTPUT_DIR` - If set this is used as the output directory ignoring `TMPDIR`
-- `MAVEN_ARGS` - If set adds additional arguments to the `mvn` commands run in [Steps](#steps) 3 and 6, this may be
-  useful if your build/release requires specific profile(s) to be activated or Maven properties to be customised
+- `MAVEN_EXTRA_ARGS` - If set adds additional arguments to the `mvn` commands run in [Steps](#steps) 3 and 6, this may
+  be useful if your build/release requires specific profile(s) to be activated or Maven properties to be customised
 
 > You **MUST NOT** set `OUTPUT_DIR` to a directory within the Maven project directory you are trying to audit, otherwise
 > some of the `mvn` commands run may wipe this directory unexpectedly and cause script failures.
@@ -61,7 +61,7 @@ This repository also contains a composite GitHub Action that may be run, the act
 
 ```yaml
       - name: Run Maven Central Audit
-        uses: Telicent-io/mvn-central-audit@v1
+        uses: telicent-oss/mvn-central-audit@v1
 ```
 
 This will install the necessary supporting tools and obtain the `audit.sh` script before running the audit.  The audit
@@ -77,7 +77,7 @@ The action supports the following inputs:
 
 | Input             | Required?  | Default   | Purpose                                                   |
 |-------------------|------------|-----------|-----------------------------------------------------------|
-| `maven-args`      | `false`    | ``        | Specifies additional Maven arguments for build & deploy   |
+| `maven-args`      | `false`    |           | Specifies additional Maven arguments for build & deploy   |
 | `max-files`       | `false`    | `100`     | Specifies the maximum permitted number of release files   |
 | `max-size`        | `false`    | `8000000` | Specifies the maximum size in bytes of the release files  |
 | `max-warnings`    | `false`    | `-1`      | Specifies the maximum number of published module warnings |

@@ -136,8 +136,8 @@ if ! mkdir -p ${OUTPUT_DIR}/; then
   abort 1 "Failed to create temporary output directory ${OUTPUT_DIR}"
 fi
 info "Maven Project Directory is ${PWD}"
-if [ -n "${MAVEN_ARGS}" ]; then
-  info "Additional Maven Arguments are ${MAVEN_ARGS}"
+if [ -n "${MAVEN_EXTRA_ARGS}" ]; then
+  info "Additional Maven Arguments are ${MAVEN_EXTRA_ARGS}"
 fi
 info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
 
@@ -172,7 +172,7 @@ blankLine
 step "Step 3: Quick Building the Maven Project"
 if [ ${STEP} -le 3 ]; then
     info "Quick building the Maven Project (skipping tests, GPG signing, CycloneDX SBOMs, Javadoc, Source and Delombok)"
-    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip ${MAVEN_ARGS} > "${OUTPUT_DIR}/quick-build.log" 2>&1 ; then
+    if ! mvn clean install -DskipTests -Dgpg.skip -Dcyclonedx.skip -Dmaven.javadoc.skip -Dmaven.source.skip -Dlombok.delombok.skip ${MAVEN_EXTRA_ARGS} > "${OUTPUT_DIR}/quick-build.log" 2>&1 ; then
       abort 3 "Failed to quick build the Maven project"
     fi
     info "Maven project quick builds OK"
@@ -260,7 +260,7 @@ blankLine
 step "Step 6: Maven Deploy Dry Run"
 if [ ${STEP} -le 6 ]; then
     info "Dry running mvn deploy (with tests skipped) to audit publishing bundle files..."
-    mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost ${MAVEN_ARGS} >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
+    mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost ${MAVEN_EXTRA_ARGS} >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
     info "Dry ran mvn deploy"
 else
     info "Skipped at user request"

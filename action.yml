@@ -81,7 +81,7 @@ runs:
         sparse-checkout: |
           audit.sh
         sparse-checkout-cone-mode: false
-        repository: Telicent-io/mvn-central-audit
+        repository: telicent-oss/mvn-central-audit
         path: mvn-central-audit/
         ref: v1
 

@@ -40,7 +40,7 @@ jobs:
 
       - name: Run action
         id: mvn-central-audit
-        uses: Telicent-io/mvn-central-audit@v1
+        uses: telicent-oss/mvn-central-audit@v1
 
       - name: Verify Artifact Uploaded
         id: verify-artifact
@@ -135,7 +135,7 @@ jobs:
 
       - name: Run action
         id: mvn-central-audit
-        uses: Telicent-io/mvn-central-audit@v1
+        uses: telicent-oss/mvn-central-audit@v1
         continue-on-error: true
         with:
           maven-args: ${{ matrix.maven-args }}
