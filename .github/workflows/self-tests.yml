@@ -49,6 +49,41 @@ jobs:
           name: ${{ steps.mvn-central-audit.outputs.artifact-name }}
           skip-decompress: true
 
+  release:
+    runs-on: ubuntu-latest
+    name: Passes against Release Commit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          repository: telicent-oss/rdf-abac
+          ref: 3.1.5
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        continue-on-error: true
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Import GPG Key
+        uses: crazy-max/ghaction-import-gpg@v7
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Run action
+        id: mvn-central-audit
+        uses: telicent-oss/mvn-central-audit@v1
+
+      - name: Verify Artifact Uploaded
+        id: verify-artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.mvn-central-audit.outputs.artifact-name }}
+          skip-decompress: true
+
   matrix:
     runs-on: ubuntu-latest
     strategy:

@@ -128,6 +128,21 @@ function classify() {
   done
 }
 
+function generateFakeSettings() {
+  rm -f "${OUTPUT_DIR}/settings.xml"
+  echo \<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
+    xsi:schemaLocation=\"http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd\"\> \
+    \<servers\> \
+      \<server\> \
+        \<!-- Intentionally bad credentials for Central --\> \
+        \<id\>${MAVEN_CENTRAL_ID:-central}\</id\> \
+        \<username\>foo\</username\> \
+        \<password\>bar\</password\> \
+      \</server\> \
+    \</servers\> \
+  \</settings\> > "${OUTPUT_DIR}/settings.xml"
+}
+
 if [ -z "${OUTPUT_DIR}" ]; then
   OUTPUT_DIR="${TMPDIR:-/tmp/}$(md5hash "$PWD")"
 fi
@@ -138,6 +153,9 @@ fi
 info "Maven Project Directory is ${PWD}"
 if [ -n "${MAVEN_EXTRA_ARGS}" ]; then
   info "Additional Maven Arguments are ${MAVEN_EXTRA_ARGS}"
+fi
+if [ -n "{MAVEN_CENTRAL_ID}" ]; then
+  info "Custom Maven Central Server ID is ${MAVEN_CENTRAL_ID}"
 fi
 info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
 
@@ -259,6 +277,13 @@ endStep
 blankLine
 step "Step 6: Maven Deploy Dry Run"
 if [ ${STEP} -le 6 ]; then
+    VERSION=$(mvn exec:exec -Dexec.executable=echo -Dexec.args='${project.version}' -N -q)
+    if echo "${VERSION}" | grep -v "SNAPSHOT"; then
+      info "Creating fake Maven settings.xml file"
+      generateFakeSettings
+      MAVEN_EXTRA_ARGS="${MAVEN_EXTRA_ARGS} -s ${OUTPUT_DIR}/settings.xml"
+    fi
+
     info "Dry running mvn deploy (with tests skipped) to audit publishing bundle files..."
     mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost ${MAVEN_EXTRA_ARGS} >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
     info "Dry ran mvn deploy"
@@ -278,7 +303,14 @@ if [ ${STEP} -le 7 ]; then
     ARTIFACT_ID=$(echo ${MODULE_INFO} | cut -d ':' -f 2)
     VERSION=$(echo ${MODULE_INFO} | cut -d ':' -f 3)
 
-    BUNDLE_DIR="target/central-deferred/$(echo "${GROUP_ID}" | tr -s '.' '/')/${ARTIFACT_ID}/${VERSION}/"
+    # Central Publishing plugin writes to a different directory depending on whether the build is for a SNAPSHOT or
+    # a release version
+    TARGET_DIR=central-deferred
+    if echo "${VERSION}" | grep -v SNAPSHOT; then
+      TARGET_DIR=central-staging
+    fi
+
+    BUNDLE_DIR="target/${TARGET_DIR}/$(echo "${GROUP_ID}" | tr -s '.' '/')/${ARTIFACT_ID}/${VERSION}/"
     info "Maven Module ${MODULE} has bundle directory ${BUNDLE_DIR}"
     echo "${MODULE} ${BUNDLE_DIR}" >> ${OUTPUT_DIR}/bundle-directories.txt
   done 3< ${OUTPUT_DIR}/published-maven-modules.txt
