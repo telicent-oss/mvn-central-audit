@@ -199,6 +199,9 @@ else
 fi
 IS_RELEASE=""
 VERSION=$(mvn exec:exec -Dexec.executable=echo -Dexec.args='${project.version}' -N -q)
+if [ -z "${VERSION}" ]; then
+  abort 3 "Failed to detect the Maven project version"
+fi
 info "Maven project version is ${VERSION}"
 if echo "${VERSION}" | grep -v "SNAPSHOT"; then
   IS_RELEASE=true
