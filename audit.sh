@@ -154,7 +154,7 @@ info "Maven Project Directory is ${PWD}"
 if [ -n "${MAVEN_EXTRA_ARGS}" ]; then
   info "Additional Maven Arguments are ${MAVEN_EXTRA_ARGS}"
 fi
-if [ -n "{MAVEN_CENTRAL_ID}" ]; then
+if [ -n "${MAVEN_CENTRAL_ID}" ]; then
   info "Custom Maven Central Server ID is ${MAVEN_CENTRAL_ID}"
 fi
 info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
