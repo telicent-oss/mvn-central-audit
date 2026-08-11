@@ -128,6 +128,21 @@ function classify() {
   done
 }
 
+function generateFakeSettings() {
+  rm -f "${OUTPUT_DIR}/settings.xml"
+  echo \<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
+    xsi:schemaLocation=\"http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd\"\> \
+    \<servers\> \
+      \<server\> \
+        \<!-- Intentionally bad credentials for Central --\> \
+        \<id\>${MAVEN_CENTRAL_ID:-central}\</id\> \
+        \<username\>foo\</username\> \
+        \<password\>bar\</password\> \
+      \</server\> \
+    \</servers\> \
+  \</settings\> > "${OUTPUT_DIR}/settings.xml"
+}
+
 if [ -z "${OUTPUT_DIR}" ]; then
   OUTPUT_DIR="${TMPDIR:-/tmp/}$(md5hash "$PWD")"
 fi
@@ -138,6 +153,9 @@ fi
 info "Maven Project Directory is ${PWD}"
 if [ -n "${MAVEN_EXTRA_ARGS}" ]; then
   info "Additional Maven Arguments are ${MAVEN_EXTRA_ARGS}"
+fi
+if [ -n "${MAVEN_CENTRAL_ID}" ]; then
+  info "Custom Maven Central Server ID is ${MAVEN_CENTRAL_ID}"
 fi
 info "Temporary Output Files will be written to $(cd ${OUTPUT_DIR} && pwd)"
 
@@ -178,6 +196,16 @@ if [ ${STEP} -le 3 ]; then
     info "Maven project quick builds OK"
 else
     info "Skipped at user request"
+fi
+IS_RELEASE=""
+VERSION=$(mvn exec:exec -Dexec.executable=echo -Dexec.args='${project.version}' -N -q)
+if [ -z "${VERSION}" ]; then
+  abort 3 "Failed to detect the Maven project version"
+fi
+info "Maven project version is ${VERSION}"
+if echo "${VERSION}" | grep -v "SNAPSHOT"; then
+  IS_RELEASE=true
+  info "Auditing a release commit"
 fi
 endStep
 
@@ -259,6 +287,12 @@ endStep
 blankLine
 step "Step 6: Maven Deploy Dry Run"
 if [ ${STEP} -le 6 ]; then
+    if [ -n "${IS_RELEASE}" ]; then
+      info "Creating fake Maven settings.xml file"
+      generateFakeSettings
+      MAVEN_EXTRA_ARGS="${MAVEN_EXTRA_ARGS} -s ${OUTPUT_DIR}/settings.xml"
+    fi
+
     info "Dry running mvn deploy (with tests skipped) to audit publishing bundle files..."
     mvn deploy -DskipTests -DautoPublish=false -DcentralBaseUrl=https://localhost ${MAVEN_EXTRA_ARGS} >${OUTPUT_DIR}/deploy-dry-run.log 2>&1
     info "Dry ran mvn deploy"
@@ -278,7 +312,14 @@ if [ ${STEP} -le 7 ]; then
     ARTIFACT_ID=$(echo ${MODULE_INFO} | cut -d ':' -f 2)
     VERSION=$(echo ${MODULE_INFO} | cut -d ':' -f 3)
 
-    BUNDLE_DIR="target/central-deferred/$(echo "${GROUP_ID}" | tr -s '.' '/')/${ARTIFACT_ID}/${VERSION}/"
+    # Central Publishing plugin writes to a different directory depending on whether the build is for a SNAPSHOT or
+    # a release version
+    TARGET_DIR=central-deferred
+    if [ -n "${IS_RELEASE}" ]; then
+      TARGET_DIR=central-staging
+    fi
+
+    BUNDLE_DIR="target/${TARGET_DIR}/$(echo "${GROUP_ID}" | tr -s '.' '/')/${ARTIFACT_ID}/${VERSION}/"
     info "Maven Module ${MODULE} has bundle directory ${BUNDLE_DIR}"
     echo "${MODULE} ${BUNDLE_DIR}" >> ${OUTPUT_DIR}/bundle-directories.txt
   done 3< ${OUTPUT_DIR}/published-maven-modules.txt
@@ -354,15 +395,16 @@ if [ ${STEP} -le 8 ]; then
     fi
 
     # Warn if multiple SBOM formats published
-    SBOM_COUNT=$(ls "${BUNDLE_DIR}" | grep -F "cyclonedx" 2>&1 | grep -v -F ".asc" 2>&1 | wc -l | tr -d ' ')
+    SBOM_COUNT=$(ls "${BUNDLE_DIR}" | grep -F "cyclonedx" 2>&1 | grep -v -F ".asc" 2>&1 | grep -v -E "sha.*$|md.*$" | wc -l | tr -d ' ')
     if [ ${SBOM_COUNT} -gt 1 ]; then
       warn "Maven Module ${MODULE} publishes multiple CycloneDX SBOM formats, SBOMs contain identical data so consider publishing only one format"
       jsonWarn "${MODULE}" "Publishes multiple CycloneDX SBOM formats, consider publishing only one format"
       ls "${BUNDLE_DIR}" | grep -F "cyclonedx" | grep -v -F ".asc"
     fi
 
-    # Warn if no hashes produced if Maven Central plugin configured to none for hashes
-    if [ ${HASHES_PER_FILE} -eq 0 ]; then
+    # Warn if no hashes produced if Maven Central plugin configured to none for hashes or this is a release which should
+    # trigger the plugin to generate hash files
+    if [ ${HASHES_PER_FILE} -eq 0 ] || [ -n "${IS_RELEASE}" ]; then
       if ! ls "${BUNDLE_DIR}" | grep -E "(sha1|md5|sha256|sha512)$" >/dev/null 2>&1; then
         warn "Maven Module ${MODULE} produces no hash files and Maven Central plugin not configured to produce them, this module may fail Maven Central validation as a result"
         jsonWarn "${MODULE}" "Produces no hash files and Maven Central plugin not configured to produce them, this module may fail Maven Central validation as a result"
@@ -409,24 +451,41 @@ endStep
 # Step 9 - Final Audit Report
 blankLine
 step "Step 9 - Produce Audit Report"
-info "Maven Project publishes ${TOTAL_FILES} release files"
-info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
 # Bundles don't contain generated hashes so need to account for those
-TOTAL_HASH_FILES=$(( (${TOTAL_FILES} / 2) * ${HASHES_PER_FILE}))
-info "An additional ${TOTAL_HASH_FILES} hash files will also be published"
-if [ ${HASHES_PER_FILE} -eq 4 ]; then
-  warn "Central Publishing plugin is configured to publish all hashes which generates 2 additional hashes per release file than if you had configured <checksums>required</checksums> on the plugin"
-elif [ ${HASHES_PER_FILE} -eq 0 ]; then
-  warn "Central Publishing plugin is configured to publish no hashes, this means your build MUST generate the hashes themselves, if it does then the hash files are already included in the release files statistics"
-fi
-if [ ${HASHES_PER_FILE} -eq 4 ]; then
-  # All four hashes (md5, sha1, sha256 and sha512 total 264 bytes)
-  HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 264 ))
+# UNLESS Maven project is a release version in which case the plugin does generate them
+if [ -z "${IS_RELEASE}" ]; then
+  info "Maven Project publishes ${TOTAL_FILES} release files"
+  info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES}) bytes of release files"
+  TOTAL_HASH_FILES=$(( (${TOTAL_FILES} / 2) * ${HASHES_PER_FILE}))
+  info "An additional ${TOTAL_HASH_FILES} hash files will also be published"
+  if [ ${HASHES_PER_FILE} -eq 4 ]; then
+    warn "Central Publishing plugin is configured to publish all hashes which generates 2 additional hashes per release file than if you had configured <checksums>required</checksums> on the plugin"
+  elif [ ${HASHES_PER_FILE} -eq 0 ]; then
+    warn "Central Publishing plugin is configured to publish no hashes, this means your build MUST generate the hashes themselves, if it does then the hash files are already included in the release files statistics"
+  fi
+  if [ ${HASHES_PER_FILE} -eq 4 ]; then
+    # All four hashes (md5, sha1, sha256 and sha512 total 264 bytes)
+    HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 264 ))
+  else
+    # Minimum required hashes (md5, sha1 total 72 bytes)
+    HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 72 ))
+  fi
+  info "Hash files will add an additional $(bytesToHuman ${HASH_FILE_SIZES}) bytes of hash files"
 else
-  # Minimum required hashes (md5, sha1 total 72 bytes)
-  HASH_FILE_SIZES=$(( ${TOTAL_HASH_FILES} * 72 ))
+  # Calculate number of hash files by scanning the release files manifests
+  TOTAL_HASH_FILES=$(cat ${OUTPUT_DIR}/*-release-files.json | jq -s '.[].files[] | select(.type | test("(md|sha)\\d+$")) | [.file]' 2>/dev/null | jq -s 'add | length' 2>/dev/null)
+  HASH_FILE_SIZES=$(cat ${OUTPUT_DIR}/*-release-files.json | jq -s '.[].files[] | select(.type | test("(md|sha)\\d+$")) | .size | tonumber | reduce . as $item ([]; . + [$item])' 2>/dev/null | jq -s 'add | add' 2>/dev/null)
+  TOTAL_FILES=$(( ${TOTAL_FILES} - ${TOTAL_HASH_FILES:-0} ))
+  TOTAL_FILE_SIZES=$(( ${TOTAL_FILE_SIZES} - ${HASH_FILE_SIZES:-0}))
+
+  info "Maven Project publishes ${TOTAL_FILES} release files"
+  info "Maven Project publishes $(bytesToHuman ${TOTAL_FILE_SIZES:-0}) bytes of release files"
+  info "An additional ${TOTAL_HASH_FILES:-0} hash files will also be published"
+  if [ ${HASHES_PER_FILE} -eq 4 ]; then
+    warn "Central Publishing plugin is configured to publish all hashes which generates 2 additional hashes per release file than if you had configured <checksums>required</checksums> on the plugin"
+  fi
+  info "Hash files will add an additional $(bytesToHuman ${HASH_FILE_SIZES:-0}) bytes of hash files"
 fi
-info "Hash files will add an additional $(bytesToHuman ${HASH_FILE_SIZES}) bytes of hash files"
 
 WARNINGS=$(cat ${OUTPUT_DIR}/*-release-files.json | jq -r '.warnings[]?' | wc -l | tr -d ' ')
 if [ ${WARNINGS} -gt 0 ]; then
@@ -434,12 +493,12 @@ if [ ${WARNINGS} -gt 0 ]; then
 fi
 blankLine
 info "Total Files (including Hashes): $(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))"
-info "Total Release Size (including Hashes): $(bytesToHuman $(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} )))"
+info "Total Release Size (including Hashes): $(bytesToHuman $(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES:-0} )))"
 
 # Produce the JSON format reports from the accumulated module reports
 blankLine
 cat ${OUTPUT_DIR}/*-release-files.json | jq --slurp -c '.[] | { modules: [.]}' \
-  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES} ))\", warnings: \"${WARNINGS}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}/audit-report.temp
+  | jq --slurp "{releaseFiles: \"${TOTAL_FILES}\", releaseFilesSize: \"${TOTAL_FILE_SIZES}\", hashFiles: \"${TOTAL_HASH_FILES}\", hashFilesSize: \"${HASH_FILE_SIZES}\", totalFiles: \"$(( ${TOTAL_FILES} + ${TOTAL_HASH_FILES:-0} ))\", totalSize: \"$(( ${TOTAL_FILE_SIZES} + ${HASH_FILE_SIZES:-0} ))\", warnings: \"${WARNINGS}\", modules: [.[].modules[]]}" > ${OUTPUT_DIR}/audit-report.temp
 
 
 # Compute per classifier sizes
